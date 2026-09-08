@@ -1,0 +1,98 @@
+# A stricter regression policy: zero tolerance on pass rate and mean score,
+# tighter latency and category bounds than the shipped default
+# (src/llm_eval_lab/reporting/data/thresholds.yaml, mirrored at
+# examples/thresholds/ci-thresholds.yaml). See docs/regression-testing.md for
+# the full field reference and bound semantics.
+#
+# Use this instead of the default policy for a project that wants "no
+# regression, ever" rather than "no regression bigger than a small tolerance":
+#
+#   uv run llm-eval compare "$BASE" "$CAND" \
+#     --thresholds examples/thresholds/strict-thresholds.yaml --json > report.json
+#
+# Every bound compares POINT ESTIMATES and resolves deterministically
+# (decision D-GATE); the confidence intervals and McNemar p-value attached to
+# each outcome remain advisory context, exactly as with the default policy.
+# Zero tolerance does not mean the gate is more statistically confident at
+# small n -- see docs/regression-testing.md, "Honesty about small samples":
+# a tight point-estimate bound on a 20-50 case suite still cannot distinguish
+# a real regression from noise smaller than roughly 25-40 percentage points.
+# This policy is a stricter GATE, not a more powerful STATISTICAL TEST; pair
+# it with a larger benchmark if the distinction matters operationally.
+
+id: strict
+version: "1"
+
+paired: true
+require_same_suite: true
+# Below the default policy's floor of 1: even a single regressing paired case
+# is worth seeing, though see the honesty note above before treating one
+# flipped case on a tiny suite as proof of a real regression.
+min_paired_cases: 1
+fail_on_missing_metric: true
+confidence_level: 0.95
+
+checks:
+  # Zero tolerance: any decrease in overall pass rate at all is a regression,
+  # not just a decrease bigger than 2 points as in the default policy.
+  - metric: pass_rate
+    label: overall pass rate
+    direction: higher_is_better
+    max_absolute_decrease: 0.0
+    min_samples: 1
+
+  # Tighter than the default's 2-point tolerance, and a lower min_samples
+  # floor so smaller categories are still gated rather than silently skipped.
+  - metric: category.*.pass_rate
+    label: category pass rate
+    direction: higher_is_better
+    max_absolute_decrease: 0.01
+    min_samples: 5
+
+  # JSON adherence: zero tolerance, same as the default policy -- this is
+  # near-deterministic syntactic behaviour either way.
+  - metric: evaluator_type.json_valid.pass_rate
+    label: JSON validity
+    direction: higher_is_better
+    max_absolute_decrease: 0.0
+    min_samples: 1
+
+  - metric: evaluator_type.json_schema.pass_rate
+    label: JSON schema adherence
+    direction: higher_is_better
+    max_absolute_decrease: 0.0
+    min_samples: 1
+
+  # Tighter latency budget: 5% relative increase rather than the default's
+  # 15%, still gated only once both runs clear the p95 minimum-n floor.
+  - metric: latency.p95_ms
+    label: p95 model latency
+    direction: lower_is_better
+    max_relative_increase: 0.05
+    min_samples: 20
+
+  # Half the default's error-rate ceiling.
+  - metric: error_rate
+    label: error rate
+    direction: lower_is_better
+    max_value: 0.005
+    min_samples: 1
+
+  # Zero tolerance on mean evaluator score (similarity, judge), rather than
+  # the default policy's 0.05 absolute-decrease allowance.
+  - metric: evaluator.*.mean_score
+    label: mean evaluator score
+    direction: higher_is_better
+    max_absolute_decrease: 0.0
+    min_samples: 1
+
+  # Warning-severity check with no counterpart in the default policy: flags
+  # ANY latency regression at all, even one too small to breach the 5% error
+  # gate above. Only affects the exit code when `compare --fail-on-warning`
+  # is passed; otherwise it is reported but does not fail the build.
+  - metric: latency.p95_ms
+    label: any p95 latency increase (advisory)
+    direction: lower_is_better
+    max_relative_increase: 0.0
+    min_samples: 20
+    severity: warning
