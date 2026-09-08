@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "rate_limit_exceeded",
+    "message": "Rate limit reached for gpt-5.1 in organization org-example on requests per min (RPM): Limit 500, Used 500, Requested 1.",
+    "param": null,
+    "type": "requests"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "background": null,
+  "completed_at": null,
+  "conversation": null,
+  "created_at": 1789084800.0,
+  "error": null,
+  "id": "resp_6f2b1c9d4e5a4f8b90a1b2c3d4e5f607",
+  "incomplete_details": null,
+  "instructions": "Answer with a single word.",
+  "max_output_tokens": null,
+  "max_tool_calls": null,
+  "metadata": {},
+  "model": "gpt-5.1-2026-04-14",
+  "moderation": null,
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": null,
+          "text": "Paris.",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "phase": null,
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "prompt": null,
+  "prompt_cache_key": null,
+  "prompt_cache_options": null,
+  "prompt_cache_retention": null,
+  "reasoning": null,
+  "safety_identifier": null,
+  "service_tier": null,
+  "status": "completed",
+  "temperature": 0.0,
+  "text": null,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": null,
+  "top_p": 1.0,
+  "truncation": null,
+  "usage": null,
+  "user": null
+}

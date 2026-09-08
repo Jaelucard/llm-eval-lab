@@ -1,0 +1,7 @@
+{
+  "error": {
+    "message": "invalid x-api-key",
+    "type": "authentication_error"
+  },
+  "type": "error"
+}

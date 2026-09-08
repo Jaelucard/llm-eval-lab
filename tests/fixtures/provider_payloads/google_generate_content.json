@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Paris."
+          }
+        ],
+        "role": "model"
+      },
+      "finish_reason": "STOP",
+      "index": 0
+    }
+  ],
+  "model_version": "gemini-2.5-flash",
+  "response_id": "F3l9aJvTKcSfz7IPu4-x2A0",
+  "usage_metadata": {
+    "cached_content_token_count": 6,
+    "candidates_token_count": 3,
+    "prompt_token_count": 18,
+    "thoughts_token_count": 0,
+    "total_token_count": 21
+  }
+}

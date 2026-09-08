@@ -1,0 +1,17 @@
+{
+  "container": null,
+  "content": [
+    {
+      "citations": null,
+      "text": "Paris.",
+      "type": "text"
+    }
+  ],
+  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+  "model": "claude-sonnet-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message"
+}
