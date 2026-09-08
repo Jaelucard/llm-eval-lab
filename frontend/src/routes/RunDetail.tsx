@@ -9,14 +9,20 @@
  * the case was model-graded, the judge's full provenance.
  *
  * While the run is still live, status polls every two seconds and stops on the
- * first terminal status.
+ * first terminal status. That poll response is the first thing to learn a run
+ * has finished, well before the 15s staleTime on the run/cases/metrics queries
+ * would naturally refetch them, so the moment the poll reports terminal this
+ * view invalidates those three so the page shows the finished run's real
+ * status, counts and numbers instead of the stale in-progress snapshot.
  */
 
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { isTerminal, type EvaluationResult } from "../api/client";
 import {
+  queryKeys,
   useCase,
   useRun,
   useRunCases,
@@ -64,10 +70,44 @@ export function RunDetail() {
   const [query, setQuery] = useState("");
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
 
+  const queryClient = useQueryClient();
   const run = useRun(runId);
-  const live = run.data ? !isTerminal(run.data.run.status) : false;
-  const status = useRunStatus(runId, { enabled: live });
+  // Whether the cached run detail still looks live: this is what keeps the
+  // status poll enabled, so it must not itself depend on the poll's answer.
+  const cachedLive = run.data ? !isTerminal(run.data.run.status) : false;
+  const status = useRunStatus(runId, { enabled: cachedLive });
+  const polledStatus = status.data?.status;
+  const polledTerminal = polledStatus !== undefined && isTerminal(polledStatus);
+  // The header stops claiming "polling every 2s" as soon as the poll itself
+  // reports terminal, even before the run/cases/metrics refetch below lands.
+  const live = cachedLive && !polledTerminal;
   const metrics = useRunMetrics(runId);
+
+  // The status poll is the first signal that a run has finished, well before
+  // the run/cases/metrics queries' own staleTime would refetch them. Fire the
+  // refresh once per run, the first time the poll reports terminal, so the
+  // page never sits on a stale status badge, stale counts or stale metrics.
+  //
+  // One predicate call, not `invalidateQueries({ queryKey: queryKeys.run(id) })`:
+  // TanStack matches keys by PREFIX unless told otherwise, so that shorter key
+  // would also match `["run", id, "status"]` and force one more status fetch
+  // the poll's own terminal check has already made unnecessary. The predicate
+  // names the run's other queries (detail, metrics, cases, case) and leaves the
+  // status query alone.
+  const invalidatedForRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (runId === undefined) return;
+    if (!polledTerminal) return;
+    if (invalidatedForRunRef.current === runId) return;
+    invalidatedForRunRef.current = runId;
+    const statusKey = queryKeys.runStatus(runId);
+    void queryClient.invalidateQueries({
+      predicate: (query) =>
+        query.queryKey[0] === "run" &&
+        query.queryKey[1] === runId &&
+        query.queryKey[2] !== statusKey[2],
+    });
+  }, [runId, polledTerminal, queryClient]);
 
   const baseParams = {
     limit: CASE_PAGE_SIZE,

@@ -10,8 +10,9 @@
 
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { RunDetail as RunDetailBody } from "../api/client";
 import { RunDetail } from "../routes/RunDetail";
 import { aggregateMetrics, caseSummary, health, runDetail, version } from "./fixtures";
 import { renderAtRoute, stubFetch } from "./helpers";
@@ -162,5 +163,128 @@ describe("RunDetail", () => {
 
     const chart = screen.getByRole("region", { name: "Latency percentile chart" });
     expect(chart).toHaveAttribute("tabindex", "0");
+  });
+});
+
+describe("RunDetail live-to-terminal refresh", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * A stateful stub: the run, status and metrics endpoints each start out
+   * answering as if the run were still in progress, then flip to their
+   * finished answer once the status poll has reported terminal at least
+   * once, and the cases endpoint's total climbs to match.
+   */
+  function serveRunningThenCompleted() {
+    const base = runDetail(RUN_ID);
+    const runningDetail: RunDetailBody = {
+      ...base,
+      n_cases: 6,
+      n_completed: 3,
+      n_passed: 2,
+      n_pass_denominator: 3,
+      pass_rate: 0.6667,
+      run: { ...base.run, status: "running", completed_at: null },
+    };
+    const completedDetail: RunDetailBody = {
+      ...base,
+      n_cases: 6,
+      n_completed: 6,
+      n_passed: 5,
+      n_pass_denominator: 6,
+      pass_rate: 0.8333,
+      run: { ...base.run, status: "completed" },
+    };
+
+    const calls = { status: 0, runDetail: 0, metrics: 0, cases: 0 };
+
+    stubFetch({
+      "/api/health": () => health,
+      "/api/version": () => version,
+      "/api/runs": (url) => {
+        const parts = url.pathname.split("/").filter(Boolean);
+        const tail = parts.slice(3).join("/");
+
+        if (tail === "status") {
+          calls.status += 1;
+          // Terminal from the second poll onward.
+          const status = calls.status < 2 ? "running" : "completed";
+          return {
+            run_id: RUN_ID,
+            status,
+            total: 6,
+            completed: status === "completed" ? 6 : 3,
+            passed: status === "completed" ? 5 : 2,
+            errors: 0,
+            cancelled: 0,
+            started_at: "2026-02-01T10:00:00Z",
+            updated_at: "2026-02-01T10:02:00Z",
+            error: null,
+            managed: false,
+            last_case_id: null,
+          };
+        }
+        if (tail === "metrics") {
+          calls.metrics += 1;
+          return calls.metrics === 1
+            ? aggregateMetrics
+            : { ...aggregateMetrics, n_completed: 6, mean_score: 0.95, median_score: 1 };
+        }
+        if (tail === "cases") {
+          calls.cases += 1;
+          return {
+            items: [caseSummary({ case_id: "case-001" })],
+            total: calls.cases === 1 ? 3 : 6,
+            limit: 200,
+            offset: 0,
+          };
+        }
+        calls.runDetail += 1;
+        return calls.runDetail === 1 ? runningDetail : completedDetail;
+      },
+    });
+
+    return calls;
+  }
+
+  it("refetches the run, cases and metrics once the poll reports terminal, and stops polling", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const calls = serveRunningThenCompleted();
+    render();
+
+    // Starts on the running snapshot, with the live poll banner showing.
+    expect(await screen.findByText("running")).toBeInTheDocument();
+    expect(screen.getByText("3 / 6")).toBeInTheDocument();
+    expect(screen.getByText(/polling every 2s/)).toBeInTheDocument();
+
+    // Let the 2s status poll fire enough times to see the terminal answer.
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    // The completed status, refreshed counts and refreshed metrics all land
+    // without a reload, and the live banner is gone.
+    await waitFor(() => {
+      expect(screen.getByText("completed")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("3 / 6")).not.toBeInTheDocument();
+      expect(screen.getByText("6 / 6")).toBeInTheDocument();
+    });
+    expect(screen.getByText("0.950")).toBeInTheDocument();
+    expect(screen.queryByText(/polling every 2s/)).not.toBeInTheDocument();
+
+    expect(calls.runDetail).toBeGreaterThanOrEqual(2);
+    expect(calls.metrics).toBeGreaterThanOrEqual(2);
+    expect(calls.cases).toBeGreaterThanOrEqual(2);
+
+    // No further status polling after the terminal detail has landed.
+    // Exactly two status reads: the initial one and the poll that reported
+    // terminal. The refresh above must not have forced a third, and no further
+    // tick may issue one either.
+    expect(calls.status).toBe(2);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(calls.status).toBe(2);
   });
 });
