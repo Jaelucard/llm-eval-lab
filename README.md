@@ -239,6 +239,34 @@ loopback only unless `LLM_EVAL_API_TOKEN` is set (decision: an unauthenticated
 API that can spend money must never be reachable off the local machine by
 default).
 
+**Token-protected mode is API-only.** When `LLM_EVAL_API_TOKEN` is set, every
+`/api/*` route except `/api/health` requires `Authorization: Bearer <token>`.
+The bundled dashboard deliberately never enters, stores or sends that token —
+it does not prompt for one, and it does not read one from local storage,
+a cookie or the URL. A bearer token here authorises spending money, and the
+dashboard is a loopback development tool; putting that secret into a browser
+on a network-exposed host would create a new way for it to leak that the
+project does not want to open. The dashboard's static files are still served
+unauthenticated at `/`, so with a token configured the page loads but every
+data request on it returns 401 — the dashboard shows this in a banner
+explaining that token mode is API-only rather than a generic error.
+
+There is no way to make the dashboard show data from a token-protected
+server. To read such a server, call the API directly with the token:
+
+```bash
+curl -H "Authorization: Bearer $LLM_EVAL_API_TOKEN" http://your-host:8000/api/runs
+```
+
+To use the dashboard on a remote machine, do not enable token mode at all:
+leave the server bound to loopback and reach it over an SSH tunnel, so the
+browser talks to a local port and no token is involved anywhere:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 your-host
+# then open http://127.0.0.1:8000 locally
+```
+
 For frontend development against a live API with hot reload:
 
 ```bash

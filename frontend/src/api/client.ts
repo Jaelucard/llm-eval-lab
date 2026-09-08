@@ -69,6 +69,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * True when `error` is a failed request that a bearer token would have fixed.
+ *
+ * The dashboard never sends `Authorization` (see `README.md#the-dashboard`),
+ * so a 401 from a guarded route always means the same thing: the server has
+ * `LLM_EVAL_API_TOKEN` set and this request needs one it will never carry.
+ */
+export function isAuthRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401;
+}
+
 /** A parsed JSON body together with the response headers that carried it. */
 export interface ResponseWithHeaders<T> {
   data: T;

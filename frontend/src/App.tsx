@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 
 import { useHealth, useVersion } from "./api/queries";
+import { AuthRequiredBanner } from "./components/QueryState";
 import { Comparison } from "./routes/Comparison";
 import { ModelComparison } from "./routes/ModelComparison";
 import { Overview } from "./routes/Overview";
@@ -80,6 +81,12 @@ function HeaderStatus() {
 }
 
 export function App() {
+  // Shares the cached `useVersion` query `HeaderStatus` already runs; querying
+  // it again here does not issue a second request. `/api/version` is guarded,
+  // so its error is the app-wide signal that this server needs a bearer token
+  // the dashboard will never send (see `AuthRequiredBanner`).
+  const version = useVersion();
+
   return (
     <>
       <header className="app-header">
@@ -97,6 +104,8 @@ export function App() {
           <ThemeToggle />
         </div>
       </header>
+
+      <AuthRequiredBanner error={version.error} />
 
       <main className="app-main">
         <Routes>
