@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from llm_eval_lab.models import StorageError
+from llm_eval_lab.redaction import redact_error_text
 
 CONNECTION_ATTRIBUTE = "connection"
 """`config.attributes` key `migrations/env.py` looks for before opening its own engine."""
@@ -87,8 +88,14 @@ async def upgrade_to_head(engine: AsyncEngine, *, script_location: Path | None =
         async with engine.begin() as connection:
             await connection.run_sync(_run_upgrade, script_location=script_location)
     except SQLAlchemyError as exc:
-        msg = f"database upgrade failed: {exc}"
-        raise StorageError(msg) from exc
+        # The engine already opened successfully by the time a migration runs,
+        # so this is not the primary leak path - but a driver-level failure
+        # during the migration (a dropped connection, an auth error mid-run)
+        # can still echo the DSN it was using, so the same scrub applies. See
+        # `engine.py::create_engine` for why `from None` replaces `from exc`.
+        cause = redact_error_text(str(exc), url=engine.url.render_as_string(hide_password=False))
+        msg = f"database upgrade failed: {type(exc).__name__}: {cause}"
+        raise StorageError(msg) from None
 
 
 def _read_revision(connection: Connection) -> str | None:
@@ -106,5 +113,6 @@ async def current_revision(engine: AsyncEngine) -> str | None:
         async with engine.connect() as connection:
             return await connection.run_sync(_read_revision)
     except SQLAlchemyError as exc:
-        msg = f"cannot read the database revision: {exc}"
-        raise StorageError(msg) from exc
+        cause = redact_error_text(str(exc), url=engine.url.render_as_string(hide_password=False))
+        msg = f"cannot read the database revision: {type(exc).__name__}: {cause}"
+        raise StorageError(msg) from None

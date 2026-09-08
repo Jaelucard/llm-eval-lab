@@ -138,16 +138,27 @@ constraint and keeps the project's usual marker.
 """
 
 
-def _redact_userinfo(netloc: str) -> str | None:
-    """Return `netloc` with its password replaced, or None when there is none.
+def _redact_userinfo(netloc: str, *, redact_username: bool = False) -> str | None:
+    """Return `netloc` with its credentials replaced, or None when there is none.
 
     Split on the LAST ``@`` rather than the first, so an unencoded ``@`` inside
     a password does not truncate the redaction and leak its tail. The host's
     letter case and the port pass through untouched.
+
+    With `redact_username`, the whole userinfo - name included - becomes
+    ``[redacted]@``. That is a stricter answer than the default, which keeps a
+    bare username on the theory that a printed configuration should still say
+    who it connects as; a caller building an error message from a URL that
+    failed to even PARSE has no such theory available and asks for the
+    stricter one instead.
     """
     if "@" not in netloc:
         return None
     userinfo, _, hostpart = netloc.rpartition("@")
+    if redact_username:
+        if not userinfo:
+            return None
+        return f"{REDACTED}@{hostpart}"
     if ":" not in userinfo:
         # A user with no password. Nothing to hide.
         return None
@@ -179,7 +190,7 @@ def _redact_query(query: str) -> str | None:
     return "&".join(redacted) if changed else None
 
 
-def redact_url(value: str) -> str:
+def redact_url(value: str, *, redact_username: bool = False) -> str:
     """Return `value` with every credential in it replaced.
 
     Two hiding places, both covered. The userinfo
@@ -196,6 +207,14 @@ def redact_url(value: str) -> str:
     intact, because they are what makes a printed configuration useful and none
     of them is the secret.
 
+    `redact_username`, when set, replaces the whole userinfo - the name along
+    with the password - with ``[redacted]@``. Default ``False`` keeps the
+    bare username, which is what every existing caller (``llm-eval config
+    show``, ``llm-eval db upgrade``) wants for a URL that opened fine. A
+    caller building a message around a URL that just FAILED to open - the
+    engine's own error path - has no such use for the name and asks for the
+    stricter form instead.
+
     A string that is not a URL, or a URL with nothing to hide, is returned
     UNCHANGED rather than re-joined: a SQLite path carries no credential and
     mangling it would make the one setting people actually need to read
@@ -209,7 +228,22 @@ def redact_url(value: str) -> str:
         parts = urlsplit(value)
     except ValueError:
         return REDACTED
-    netloc = _redact_userinfo(parts.netloc)
+    if parts.netloc and "@" in f"{parts.path}{parts.query}{parts.fragment}":
+        # An authority followed by an `@` somewhere after it means the split
+        # may have landed in the wrong place: an unencoded `/`, `?` or `#`
+        # inside a credential ends the netloc early and pushes the rest of the
+        # credential, together with the real `@host`, past it, where the
+        # userinfo redaction below cannot reach it. Nothing after the scheme
+        # can be trusted at that point, so fail closed rather than print the
+        # tail. The truncated authority can look like anything - a bare token
+        # used as the username leaves no colon behind - so the only reliable
+        # signal is that an authority exists at all. A SQLite URL has none, so
+        # a path like `/tmp/a@b.db` passes through. The cost is that an
+        # ordinary URL carrying an `@` after its host, such as an email
+        # address in a query string, is redacted wholesale too; that is the
+        # safe direction for a function whose only job is redaction.
+        return f"{parts.scheme}://{REDACTED}"
+    netloc = _redact_userinfo(parts.netloc, redact_username=redact_username)
     query = _redact_query(parts.query)
     if netloc is None and query is None:
         return value
@@ -221,6 +255,62 @@ def redact_url(value: str) -> str:
             parts.query if query is None else query,
             parts.fragment,
         )
+    )
+
+
+_URL_TOKEN_PATTERN = re.compile(r"""[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>]*""")
+"""Matches a URL-shaped token anywhere inside free-form text.
+
+Deliberately looser than a real URL grammar: it exists to catch a connection
+string a DRIVER re-formatted into its own error message (a different
+argument order, a filled-in default port), not to validate one. Overmatching
+a little at the edges is the safe direction for something whose only job is
+redaction.
+"""
+
+
+def redact_error_text(text: str, *, url: str | None = None) -> str:
+    """Return `text` with every credential belonging to `url` scrubbed out of it.
+
+    Sanitizes a WRAPPED exception's own message, which can carry the very
+    credential the caller is trying to keep out of a raised error
+    independently of anything the caller writes: a database driver's failure
+    text often echoes back exactly what it failed to connect to.
+
+    Two passes. First, when the offending `url` is known, its password and
+    username are cut out of `text` by exact substring match - byte for byte,
+    regardless of how the driver worded the rest of the message - and so is
+    the URL as a whole, in case the driver quoted it verbatim. Second,
+    whatever URL-shaped token remains anywhere in `text` (the driver's own
+    reformatting, or an unrelated URL) is passed through :func:`redact_url`
+    with `redact_username` on, since a scrubbed error message has no use for
+    a name attached to a database that could not be reached.
+
+    Empty or `None` for `url` skips the first pass and still runs the second,
+    so this is safe to call even when the caller has no URL to key off.
+
+    The exact-match pass is a plain substring replacement, so a very short or
+    very common password or username (``"a"``, ``"test"``, a value that also
+    occurs inside the host name) will also blank unrelated fragments of the
+    driver's text. That costs some readability and never leaks anything,
+    which is the right trade for a function whose only job is redaction.
+    """
+    sanitized = text
+    if url:
+        sanitized = sanitized.replace(url, REDACTED)
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            parts = None
+        if parts is not None and "@" in parts.netloc:
+            userinfo = parts.netloc.rpartition("@")[0]
+            user, _, password = userinfo.partition(":")
+            if password:
+                sanitized = sanitized.replace(password, REDACTED)
+            if user:
+                sanitized = sanitized.replace(user, REDACTED)
+    return _URL_TOKEN_PATTERN.sub(
+        lambda match: redact_url(match.group(0), redact_username=True), sanitized
     )
 
 

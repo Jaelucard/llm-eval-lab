@@ -26,16 +26,19 @@ from typing import Any
 import pytest
 import structlog
 from pydantic import SecretStr
+from typer.testing import CliRunner
 
-from llm_eval_lab.models import CaseQuery, RunStatus, UnitOfWorkFactory
+from llm_eval_lab.cli.main import ExitCode, app
+from llm_eval_lab.models import CaseQuery, RunStatus, StorageError, UnitOfWorkFactory
 from llm_eval_lab.observability.logging import configure_logging
-from llm_eval_lab.redaction import REDACTED, redact_setting_value, redact_url
+from llm_eval_lab.redaction import REDACTED, redact_error_text, redact_setting_value, redact_url
 from llm_eval_lab.reporting.formatters import case_rows, metrics_document
 from llm_eval_lab.services import (
     RunRequest,
     build_metrics_service,
     build_run_service,
     compute_pass_rate,
+    open_unit_of_work_factory,
 )
 from llm_eval_lab.settings import Settings
 
@@ -289,6 +292,30 @@ def test_redact_url_fails_closed_on_an_unparseable_url() -> None:
     assert redact_url("http://[::1:80/x") == REDACTED
 
 
+@pytest.mark.parametrize("separator", ["/", "?", "#"])
+@pytest.mark.parametrize("userinfo", ["user:pw", "tok"])
+def test_redact_url_fails_closed_when_a_raw_separator_splits_the_credential(
+    separator: str, userinfo: str
+) -> None:
+    # An unencoded `/`, `?` or `#` inside a credential ends the authority early
+    # and pushes the rest of it - and the real `@host` - past it, where a
+    # userinfo redaction cannot see it. The only safe answer is to print
+    # nothing after the scheme. The bare-token shape matters: a token used as
+    # the username leaves no colon in the truncated authority, so the guard
+    # must not depend on one.
+    url = f"postgresql+asyncpg://{userinfo}{separator}{CANARY_VALUE}@dbhost:5432/evals"
+    for redacted in (redact_url(url), redact_url(url, redact_username=True)):
+        assert redacted == f"postgresql+asyncpg://{REDACTED}"
+        assert CANARY_VALUE not in redacted
+
+
+def test_redact_url_still_leaves_an_at_sign_in_a_sqlite_path_alone() -> None:
+    # A SQLite URL has no authority, so the fail-closed rule above must not
+    # fire on a database file that merely has an `@` in its name.
+    url = "sqlite+aiosqlite:////var/lib/llm-eval-lab/team@lab.db"
+    assert redact_url(url) == url
+
+
 def test_redact_setting_value_never_unwraps_a_secret() -> None:
     assert redact_setting_value(SecretStr(CANARY_VALUE)) is None
 
@@ -296,6 +323,134 @@ def test_redact_setting_value_never_unwraps_a_secret() -> None:
 def test_redact_setting_value_redacts_urls_inside_a_sequence() -> None:
     rendered = redact_setting_value([f"https://u:{CANARY_VALUE}@origin.test"])
     assert CANARY_VALUE not in str(rendered)
+
+
+# ---------------------------------------------------------------------------
+# Finding: a malformed database URL puts its own password into StorageError.
+#
+# `redact_url`'s default keeps a bare username, which is right for a URL that
+# opened successfully (`llm-eval config show`, `llm-eval db upgrade` on
+# success). A URL that failed to even PARSE has no such use for the name, so
+# `create_engine`'s error path asks for the stricter `redact_username=True`
+# instead. These two tests pin that this option exists and that it does not
+# change the default that every other caller already depends on.
+# ---------------------------------------------------------------------------
+
+DB_CANARY_USER = "canary-user-2b9d"
+DB_CANARY_PASSWORD = "canary-pw-7f3a9c1e"  # noqa: S105 - a planted canary, not a credential
+DB_MALFORMED_URL = (
+    f"postgresql+asyncpg://{DB_CANARY_USER}:{DB_CANARY_PASSWORD}@dbhost:notaport/evals"
+)
+"""A malformed port fails at URL-parsing time, before the optional `asyncpg`
+driver would need to be installed - the same fixture `create_engine`'s own
+unit tests use, kept in sync here for the CLI- and logging-level sweeps."""
+
+
+def test_redact_url_with_redact_username_hides_the_whole_userinfo() -> None:
+    url = f"postgresql://{DB_CANARY_USER}:{DB_CANARY_PASSWORD}@host:5432/db"
+    redacted = redact_url(url, redact_username=True)
+    assert redacted == "postgresql://[redacted]@host:5432/db"
+    assert DB_CANARY_USER not in redacted
+    assert DB_CANARY_PASSWORD not in redacted
+
+
+def test_redact_url_with_redact_username_still_hides_a_bare_username() -> None:
+    # No password at all, only a name - still fully hidden under the stricter option.
+    url = "postgresql://someuser@host/db"
+    assert redact_url(url, redact_username=True) == "postgresql://[redacted]@host/db"
+
+
+def test_redact_url_default_keeps_the_username_unchanged() -> None:
+    # The new keyword must not move the existing default for every other caller.
+    url = f"postgresql://{DB_CANARY_USER}:{DB_CANARY_PASSWORD}@host:5432/db"
+    assert redact_url(url) == f"postgresql://{DB_CANARY_USER}:[redacted]@host:5432/db"
+    assert redact_url(url, redact_username=False) == redact_url(url)
+
+
+def test_redact_error_text_strips_a_known_urls_credentials_from_free_text() -> None:
+    text = f"connection to {DB_MALFORMED_URL} failed: bad port"
+    sanitized = redact_error_text(text, url=DB_MALFORMED_URL)
+    assert DB_CANARY_USER not in sanitized
+    assert DB_CANARY_PASSWORD not in sanitized
+    assert DB_MALFORMED_URL not in sanitized
+    assert "bad port" in sanitized
+
+
+def test_redact_error_text_also_catches_a_reformatted_url_it_was_not_told_about() -> None:
+    # The driver reordered the query string relative to what was passed in, so
+    # the exact-match pass alone would miss it; the regex sweep must not.
+    driver_text = f"could not connect to postgresql://reformatted:{DB_CANARY_PASSWORD}@otherhost/db"
+    sanitized = redact_error_text(driver_text, url=DB_MALFORMED_URL)
+    assert DB_CANARY_PASSWORD not in sanitized
+
+
+def test_redact_error_text_is_a_no_op_on_plain_text_with_no_url() -> None:
+    assert redact_error_text("no url here", url=None) == "no url here"
+
+
+@pytest.mark.integration
+def test_the_malformed_database_url_canary_never_reaches_cli_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI, human mode: neither stdout nor stderr may carry the canary."""
+    monkeypatch.delenv("LLM_EVAL_DATABASE_URL", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(app, ["--db-url", DB_MALFORMED_URL, "runs"])
+
+    assert result.exit_code == ExitCode.INTERNAL_ERROR
+    assert DB_CANARY_USER not in result.stdout
+    assert DB_CANARY_PASSWORD not in result.stdout
+    assert DB_CANARY_USER not in result.stderr
+    assert DB_CANARY_PASSWORD not in result.stderr
+    assert DB_MALFORMED_URL not in result.stderr
+    assert "dbhost" in result.stderr, "the error should stay diagnosable"
+
+
+@pytest.mark.integration
+def test_the_malformed_database_url_canary_never_reaches_cli_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI, `--json` mode: the `message` field must be scrubbed too."""
+    monkeypatch.delenv("LLM_EVAL_DATABASE_URL", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(app, ["--db-url", DB_MALFORMED_URL, "runs", "--json"])
+
+    assert result.exit_code == ExitCode.INTERNAL_ERROR
+    assert DB_CANARY_USER not in result.stdout
+    assert DB_CANARY_PASSWORD not in result.stdout
+
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "StorageError"
+    assert DB_CANARY_USER not in payload["message"]
+    assert DB_CANARY_PASSWORD not in payload["message"]
+    assert DB_MALFORMED_URL not in payload["message"]
+    assert "dbhost" in payload["message"]
+
+
+@pytest.mark.integration
+async def test_the_malformed_database_url_canary_never_reaches_a_log_line(
+    captured_logs: io.StringIO,
+) -> None:
+    """Even with logging turned up to DEBUG, opening a bad URL logs no canary.
+
+    `captured_logs` routes the real structlog pipeline (scrubbing included)
+    into a buffer, exactly as the credential-in-environment canary test above
+    does. This goes through `open_unit_of_work_factory` directly rather than
+    the CLI: the CLI's own callback reconfigures logging (and, inside
+    `CliRunner.invoke`, rebinds it to the runner's captured stream rather than
+    this buffer), which would make a CLI-level version of this test pass for
+    the wrong reason - by no longer writing to `captured_logs` at all, not by
+    genuinely producing no leak.
+    """
+    with pytest.raises(StorageError):
+        async with open_unit_of_work_factory(DB_MALFORMED_URL):
+            pass
+
+    logs = captured_logs.getvalue()
+    assert DB_CANARY_USER not in logs
+    assert DB_CANARY_PASSWORD not in logs
+    assert DB_MALFORMED_URL not in logs
 
 
 # ---------------------------------------------------------------------------

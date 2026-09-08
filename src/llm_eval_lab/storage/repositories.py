@@ -46,6 +46,7 @@ from llm_eval_lab.models import (
     RunTotals,
     StorageError,
 )
+from llm_eval_lab.redaction import redact_error_text
 from llm_eval_lab.scoring import (
     DEFAULT_ERROR_POLICY,
     CaseVerdict,
@@ -80,11 +81,16 @@ def _raise_storage_error(operation: str, exc: SQLAlchemyError) -> NoReturn:
     keeps every call site a single line and gives it a ``NoReturn`` type, so
     the type checker knows control does not continue past the handler.
 
+    The driver's own text is scrubbed before it is embedded, and the original
+    is not chained as ``__cause__``: a connection-level failure can echo the
+    DSN it was using, credentials included, and a chained cause would carry
+    that raw text into any traceback. See `engine.py::create_engine`.
+
     Raises:
         StorageError: always.
     """
-    msg = f"{operation} failed: {exc}"
-    raise StorageError(msg) from exc
+    msg = f"{operation} failed: {type(exc).__name__}: {redact_error_text(str(exc))}"
+    raise StorageError(msg) from None
 
 
 class BenchmarkRepository:

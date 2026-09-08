@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from llm_eval_lab.models import StorageError
+from llm_eval_lab.redaction import redact_error_text, redact_url
 
 SQLITE_PRAGMAS: tuple[tuple[str, str], ...] = (
     ("foreign_keys", "ON"),
@@ -82,8 +83,21 @@ def create_engine(url: str, *, echo: bool = False) -> AsyncEngine:
     try:
         engine = create_async_engine(url, echo=echo, future=True)
     except (SQLAlchemyError, ValueError) as exc:
-        msg = f"cannot open database {url}: {exc}"
-        raise StorageError(msg) from exc
+        # `url` is the malformed DSN itself - password included - so it can
+        # never be interpolated raw. `redact_username=True` hides the name
+        # too: a URL that failed to even parse gives an operator no reliable
+        # use for it. The driver's own exception text is scrubbed the same
+        # way with `redact_error_text`, because SQLAlchemy and the DBAPI
+        # module both sometimes echo the raw DSN back inside `str(exc)`
+        # itself, independently of what this function writes.
+        safe_url = redact_url(url, redact_username=True)
+        cause = redact_error_text(str(exc), url=url)
+        msg = f"cannot open database {safe_url}: {type(exc).__name__}: {cause}"
+        # `from None`, not `from exc`: `exc.args` still carries the raw,
+        # unredacted URL (that is what triggered this branch), and chaining it
+        # as `__cause__` would put that raw URL right back into any traceback
+        # this StorageError reaches, undoing the scrubbing above.
+        raise StorageError(msg) from None
     if is_sqlite_url(url):
         _register_sqlite_pragmas(engine)
     return engine

@@ -40,6 +40,7 @@ from llm_eval_lab.models import (
     UnitOfWork,
     UnitOfWorkFactory,
 )
+from llm_eval_lab.redaction import redact_error_text
 from llm_eval_lab.storage.engine import create_session_factory
 from llm_eval_lab.storage.repositories import (
     BenchmarkRepository,
@@ -93,16 +94,18 @@ class SqlAlchemyUnitOfWork:
         try:
             await self._session.commit()
         except SQLAlchemyError as exc:
-            msg = f"commit failed: {exc}"
-            raise StorageError(msg) from exc
+            # A driver's failure text can echo the DSN it was using, so the
+            # cause is scrubbed and not chained. See `engine.py::create_engine`.
+            msg = f"commit failed: {type(exc).__name__}: {redact_error_text(str(exc))}"
+            raise StorageError(msg) from None
 
     async def rollback(self) -> None:
         """Roll the scope back."""
         try:
             await self._session.rollback()
         except SQLAlchemyError as exc:
-            msg = f"rollback failed: {exc}"
-            raise StorageError(msg) from exc
+            msg = f"rollback failed: {type(exc).__name__}: {redact_error_text(str(exc))}"
+            raise StorageError(msg) from None
 
 
 def make_uow_factory(
