@@ -1,0 +1,60 @@
+# Similarity scoring, deliberately lexical-only.
+#
+# `lexical_similarity` needs nothing but the two strings, so this suite runs
+# offline against the fake provider and passes with `--fake-mode expected`.
+#
+# `semantic_similarity` is absent ON PURPOSE, and its absence is the honest
+# outcome of decision D-SIM rather than an oversight: it REQUIRES an
+# `embedding_provider`, and it never falls back to word overlap when one is
+# missing. A fixture suite cannot fake its way around that, so semantic
+# similarity is exercised in `tests/unit/test_evaluators_similarity.py` against
+# a provider double that really does return embeddings, and the load-time
+# refusal of a case that omits the field is asserted there too.
+schema_version: 1
+name: similarity
+version: "1"
+description: >-
+  Lexical similarity scoring at several thresholds and both comparison methods.
+
+defaults:
+  system: You are a terse assistant. Answer with the shortest correct response.
+  params:
+    temperature: 0.0
+    max_output_tokens: 64
+  tags:
+    - similarity
+
+cases:
+  - id: paraphrase-token-set
+    category: paraphrase
+    input: Describe what the Eiffel Tower is, in one sentence.
+    expected: The Eiffel Tower is a wrought-iron lattice tower in Paris.
+    evaluators:
+      - type: lexical_similarity
+        params:
+          method: token_set
+          threshold: 0.5
+          normalize: true
+
+  - id: spelling-char-ngram
+    category: formatting
+    input: Spell the word 'colour' the way it is written in British English.
+    expected: colour
+    evaluators:
+      - type: lexical_similarity
+        params:
+          method: char_ngram
+          ngram: 3
+          threshold: 0.5
+          normalize: true
+
+  - id: punctuation-insensitive
+    category: formatting
+    input: Greet the world politely.
+    expected: "Hello, world!"
+    evaluators:
+      - type: lexical_similarity
+        params:
+          method: token_set
+          threshold: 0.6
+          normalize: true

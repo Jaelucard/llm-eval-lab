@@ -1,0 +1,81 @@
+# A judge-backed suite that runs end to end with no network and no credentials.
+#
+# The CANDIDATE model comes from the command line (`--provider fake --model
+# fake-1`). The JUDGE is configured here, as a second fake provider in
+# `scripted` mode: none of the judge requests carry a case id, so every one of
+# them falls through to `fallback`, which is a fixed, valid verdict. That is
+# what makes a judge run reproducible offline - the judgment is fixed data, and
+# what is being exercised is the prompt rendering, the strict parsing, the
+# aggregation and the provenance, not a model's opinion.
+#
+# The two cases differ in exactly one way, which is the point of the fixture:
+# `capital-graded` sets no `pass_threshold` and therefore contributes a score
+# with `passed=None` (counted under `n_score_only`, excluded from `pass_rate`),
+# while `capital-gated` sets one on the raw 1-5 scale and therefore returns a
+# real pass/fail.
+schema_version: 1
+name: judge-rubric
+version: "1"
+description: >-
+  LLM-as-judge scoring against a weighted rubric, backed by a scripted fake
+  judge so the suite is deterministic and offline.
+
+defaults:
+  system: You are a terse assistant. Answer with the shortest correct response.
+  params:
+    temperature: 0.0
+    max_output_tokens: 64
+  tags:
+    - judge
+
+cases:
+  - id: capital-graded
+    category: geography
+    input: What is the capital of France?
+    expected: Paris
+    evaluators:
+      - type: llm_judge
+        id: rubric-score-only
+        params: &judge_params
+          rubric: >-
+            Grade the candidate answer to a short factual question. A good
+            answer states the correct fact and adds nothing that is wrong.
+          criteria:
+            - id: correctness
+              description: Does the answer state the correct final result?
+              weight: 0.6
+            - id: completeness
+              description: Does it address every part of the question?
+              weight: 0.4
+          scale:
+            kind: integer
+            minimum: 1
+            maximum: 5
+            labels:
+              "1": Factually wrong, or contradicts the reference answer.
+              "2": Major errors; only incidentally touches the right idea.
+              "3": Partially correct; a knowledgeable reader would need to fix it.
+              "4": Correct with minor imprecision.
+              "5": Fully correct and precise.
+          use_reference: true
+          repetitions: 1
+          aggregation: median
+          provider:
+            provider: fake
+            model: fake-judge-1
+            label: scripted-judge
+            options:
+              mode: scripted
+              fallback: |
+                {"criteria": [{"name": "correctness", "score": 4, "rationale": "States the correct city."}, {"name": "completeness", "score": 5, "rationale": "Answers the whole question."}], "overall_score": 4.4, "rationale": "Correct and complete, with a minor imprecision.", "violations": [], "confidence": 0.8}
+
+  - id: capital-gated
+    category: geography
+    input: Name the capital of France.
+    expected: Paris
+    evaluators:
+      - type: llm_judge
+        id: rubric-gated
+        params:
+          <<: *judge_params
+          pass_threshold: 4.0

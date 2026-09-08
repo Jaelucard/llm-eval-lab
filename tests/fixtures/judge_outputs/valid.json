@@ -1,0 +1,10 @@
+{
+  "criteria": [
+    {"name": "correctness", "score": 4, "rationale": "States the right result with a small imprecision in the units."},
+    {"name": "completeness", "score": 5, "rationale": "Addresses every part of the question."}
+  ],
+  "overall_score": 4.4,
+  "rationale": "Correct and complete, with one minor imprecision.",
+  "violations": [],
+  "confidence": 0.8
+}
