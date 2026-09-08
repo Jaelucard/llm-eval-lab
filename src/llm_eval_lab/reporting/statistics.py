@@ -400,13 +400,23 @@ def required_n(
         The number of cases needed per arm.
 
     Raises:
-        ValueError: when `delta` or `p1` is outside its domain.
+        ValueError: when `delta` or `p1` is outside its domain, or when `delta`
+            is larger than `p1` and the drop is therefore infeasible (a pass
+            rate cannot fall by more than it is). A baseline of ``0.0`` always
+            raises, since no drop is possible from a pass rate that is already
+            zero.
     """
     if not 0.0 < delta < 1.0:
         msg = f"required_n needs 0 < delta < 1, got {delta}"
         raise ValueError(msg)
     if not 0.0 <= p1 <= 1.0:
         msg = f"required_n needs 0 <= p1 <= 1, got {p1}"
+        raise ValueError(msg)
+    if delta > p1:
+        msg = (
+            f"required_n needs delta <= p1 (a drop of {delta} from a baseline of "
+            f"{p1} is not possible)"
+        )
         raise ValueError(msg)
     exact = _required_n_continuous(delta, p1, z_for_alpha(alpha), z_for_power(power))
     return math.ceil(exact)
@@ -431,6 +441,14 @@ def minimum_detectable_difference(
     result comes out of a numeric inversion, it reproduces the project's
     fixtures to ``1e-3`` rather than the ``1e-4`` every closed form here meets.
 
+    The result is capped at `p1`: a drop larger than the baseline itself is not
+    a possible pass-rate movement. When `n` is too small to detect even a drop
+    all the way to a zero pass rate, the unconstrained root this bisects toward
+    sits above `p1`, and the honest answer is the largest drop that is still
+    physically possible: this returns (approximately) `p1` itself in that
+    case, rather than a number larger than the baseline that no real pass-rate
+    drop could ever equal.
+
     Args:
         n: Cases per arm, strictly positive.
         p1: The baseline pass rate, between 0 and 1.
@@ -438,10 +456,14 @@ def minimum_detectable_difference(
         power: Desired statistical power.
 
     Returns:
-        The minimum detectable absolute difference in pass rate.
+        The minimum detectable absolute difference in pass rate, never more
+        than `p1`.
 
     Raises:
-        ValueError: when `n` is not positive or `p1` is outside ``[0, 1]``.
+        ValueError: when `n` is not positive, `p1` is outside ``[0, 1]``, or
+            `p1` is ``0.0``. A baseline of zero has no feasible drop at all
+            (there is nothing below zero to fall to), so there is no
+            detectable difference to report.
     """
     if n <= 0:
         msg = f"minimum_detectable_difference needs n > 0, got {n}"
@@ -449,12 +471,21 @@ def minimum_detectable_difference(
     if not 0.0 <= p1 <= 1.0:
         msg = f"minimum_detectable_difference needs 0 <= p1 <= 1, got {p1}"
         raise ValueError(msg)
+    if p1 == 0.0:
+        msg = (
+            "minimum_detectable_difference needs p1 > 0 (no drop is possible from a baseline of 0)"
+        )
+        raise ValueError(msg)
 
     z = z_for_alpha(alpha)
     z_beta = z_for_power(power)
     # The required sample size falls as the difference to detect grows, so the
     # bracket is ordered largest-n first and the midpoint moves the low end up
-    # while it still demands more cases than are available.
+    # while it still demands more cases than are available. The bracket itself
+    # is left at its original width (rather than narrowed to p1) so that every
+    # already-feasible case takes the same bisection path and reproduces the
+    # same float, bit for bit, as before this function learned about p1's
+    # ceiling.
     low, high = _MDD_SEARCH_LOW, _MDD_SEARCH_HIGH
     while high - low > _MDD_TOLERANCE:
         middle = (low + high) / 2.0
@@ -462,7 +493,13 @@ def minimum_detectable_difference(
             low = middle
         else:
             high = middle
-    return (low + high) / 2.0
+    # A drop larger than the baseline itself is not a possible movement, so the
+    # result is capped at p1. This is the only place that ceiling is enforced:
+    # when n is too small to detect even a drop all the way to a zero pass
+    # rate, the unconstrained root the bisection converges toward sits above
+    # p1, and capping it here reports the largest drop that is still feasible
+    # instead of a number no real pass rate could ever fall by.
+    return min((low + high) / 2.0, p1)
 
 
 def low_confidence_percentiles(n: int) -> tuple[str, ...]:

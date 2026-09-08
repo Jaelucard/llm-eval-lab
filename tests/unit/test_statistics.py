@@ -330,6 +330,56 @@ def test_minimum_detectable_difference_refuses_a_domain_violation(n: int, p1: fl
         minimum_detectable_difference(n=n, p1=p1)
 
 
+# --- infeasible pass-rate drops --------------------------------------------
+
+
+def test_required_n_refuses_a_drop_larger_than_the_baseline() -> None:
+    with pytest.raises(ValueError, match="required_n"):
+        required_n(delta=0.8, p1=0.0)
+
+
+def test_required_n_refuses_a_drop_exceeding_the_baseline() -> None:
+    with pytest.raises(ValueError, match="required_n"):
+        required_n(delta=0.5, p1=0.4)
+
+
+def test_required_n_accepts_a_drop_to_exactly_zero() -> None:
+    value = required_n(delta=0.4, p1=0.4)
+    assert isinstance(value, int)
+    assert value > 0
+
+
+def test_required_n_accepts_a_drop_just_short_of_the_baseline() -> None:
+    value = required_n(delta=0.3999, p1=0.4)
+    assert isinstance(value, int)
+    assert value > 0
+
+
+def test_minimum_detectable_difference_never_exceeds_the_baseline() -> None:
+    assert minimum_detectable_difference(n=5, p1=0.1) <= 0.1
+
+
+@pytest.mark.parametrize("n", [1, 2, 5, 10, 50, 1000])
+@pytest.mark.parametrize("p1", [0.05, 0.1, 0.5, 0.9, 1.0])
+def test_minimum_detectable_difference_stays_in_the_feasible_range(n: int, p1: float) -> None:
+    value = minimum_detectable_difference(n=n, p1=p1)
+    assert 0.0 < value <= p1
+
+
+def test_minimum_detectable_difference_refuses_a_zero_baseline() -> None:
+    with pytest.raises(ValueError, match="minimum_detectable_difference"):
+        minimum_detectable_difference(n=100, p1=0.0)
+
+
+def test_minimum_detectable_difference_is_small_at_large_n() -> None:
+    assert minimum_detectable_difference(n=1000, p1=0.1) < 0.1
+
+
+def test_minimum_detectable_difference_still_falls_as_samples_grow_at_low_p1() -> None:
+    values = [minimum_detectable_difference(n=n, p1=0.1) for n in (20, 50, 100, 200, 500)]
+    assert values == sorted(values, reverse=True)
+
+
 # --- constants and quantiles ----------------------------------------------
 
 
