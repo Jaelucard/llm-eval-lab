@@ -1,0 +1,22 @@
+# An INVALID suite carrying the canary, for the error path.
+#
+# `secretish.yaml` covers the success path: it loads, so the scrubber in
+# `CatalogService.load_redacted_suite` runs over it. This file exists because a
+# suite that does NOT load never reaches that scrubber, and the validation error
+# echoes whatever the loader was looking at when it failed.
+#
+# The case omits its required `id`, so pydantic reports the failure at
+# `cases[0].id` and offers the WHOLE case object as the offending input - with
+# the canary sitting inside its `metadata`. A redaction keyed on the location
+# name cannot see that: the location names the missing field, not the secret
+# beside it. Nothing in this file may reach an HTTP response body.
+schema_version: 1
+name: malformed_leaky
+version: "1"
+cases:
+  - input: Say hello.
+    expected: hello
+    metadata:
+      api_key: "sk-canary-DO-NOT-LEAK-0123456789"
+    evaluators:
+      - type: exact_match

@@ -1,0 +1,26 @@
+# Two cases: one whose regex is catastrophic and will be abandoned on a timeout,
+# one that scores normally. Used to prove that an evaluator that could not reach
+# a conclusion makes its CASE errored, that the errored case is excluded from the
+# pass-rate denominator, and that the other case is still scored.
+#
+# `(a+)+$` against a non-matching 41-character subject is the classic
+# catastrophic-backtracking shape. `match_timeout_s` is deliberately small so the
+# test is fast; the bound is enforced by killing a worker process.
+schema_version: 1
+name: regextimeout
+version: "1"
+cases:
+  - id: catastrophic
+    input: Produce a long run of the letter a.
+    expected: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+    evaluators:
+      - type: regex
+        params:
+          pattern: "(a+)+$"
+          match_timeout_s: 0.5
+
+  - id: well-behaved
+    input: What is the capital of France?
+    expected: Paris
+    evaluators:
+      - type: exact_match

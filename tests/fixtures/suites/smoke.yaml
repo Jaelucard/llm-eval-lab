@@ -1,0 +1,79 @@
+# The walking-skeleton smoke suite.
+#
+# Six cases, one per deterministic evaluator plus a normalization case. Every
+# case is written so that a run with `--fake-mode expected`, where the fake
+# provider returns the case's own expected answer, passes: that gives a
+# guaranteed all-pass baseline the end-to-end test can assert `pass_rate == 1.0`
+# against without depending on any model's behaviour.
+#
+# The case count is fixed at six and is asserted by the test suite. Cases may be
+# added later, but the tests that pin the count are updated in the same change.
+schema_version: 1
+name: smoke
+version: "1"
+description: >-
+  End-to-end smoke suite exercising each deterministic evaluator once.
+
+defaults:
+  system: You are a terse assistant. Answer with the shortest correct response.
+  params:
+    temperature: 0.0
+    max_output_tokens: 64
+  tags:
+    - smoke
+
+cases:
+  - id: capital-exact
+    category: geography
+    input: What is the capital of France?
+    expected: Paris
+    evaluators:
+      - type: exact_match
+
+  - id: capital-case-insensitive
+    category: geography
+    input: Name the capital of France in lower case.
+    expected: paris
+    evaluators:
+      - type: exact_match_ci
+
+  - id: boiling-point-contains
+    category: science
+    input: At what temperature does water boil at sea level?
+    expected: Water boils at 100 degrees Celsius at sea level.
+    evaluators:
+      - type: contains
+        params:
+          values:
+            - "100"
+            - Celsius
+          mode: all
+
+  - id: order-number-regex
+    category: formatting
+    input: Reply with the order number 42 and nothing else.
+    expected: "42"
+    evaluators:
+      - type: regex
+        params:
+          pattern: "^[0-9]+$"
+          must_match: true
+
+  - id: pi-numeric
+    category: arithmetic
+    input: What is pi to two decimal places?
+    expected: 3.14
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          abs_tol: 0.01
+
+  - id: whitespace-normalized
+    category: formatting
+    input: Greet the world.
+    expected: "  hello   world  "
+    evaluators:
+      - type: exact_match
+        params:
+          strip: true
+          normalize_whitespace: true

@@ -1,0 +1,32 @@
+# Deliberately invalid at the EVALUATOR level. Structurally this file is fine,
+# so it exercises the second validation pass: unknown types, parameters the
+# evaluator's own params_model refuses, and a regex that will not compile.
+#
+#   cases[0].evaluators[0].type            unknown evaluator type
+#   cases[1].evaluators[0].params.pattern  regex that does not compile
+#   cases[2].evaluators[0].params.values   empty, but at least one is required
+schema_version: 1
+name: badevaluator
+version: "1"
+cases:
+  - id: unknown-type
+    input: Anything.
+    expected: anything
+    evaluators:
+      - type: no_such_evaluator
+
+  - id: bad-regex
+    input: Anything.
+    expected: anything
+    evaluators:
+      - type: regex
+        params:
+          pattern: "([unclosed"
+
+  - id: empty-contains
+    input: Anything.
+    expected: anything
+    evaluators:
+      - type: contains
+        params:
+          values: []

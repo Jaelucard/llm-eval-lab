@@ -1,0 +1,20 @@
+# Deliberately invalid: THREE structural problems, so a test can prove the
+# loader reports every error in a file rather than stopping at the first.
+#
+#   cases[0]  no `id`
+#   cases[1]  id `has-neither`, but neither `input` nor `messages`
+#   cases[2]  id `has-unknown-field`, with a field the schema forbids
+schema_version: 1
+name: malformed
+version: "1"
+cases:
+  - input: This case has no id at all.
+    expected: nothing
+
+  - id: has-neither
+    expected: nothing
+
+  - id: has-unknown-field
+    input: This case has a field the schema does not define.
+    expected: nothing
+    unexpected_field: this key is not part of the contract

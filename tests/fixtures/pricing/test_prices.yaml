@@ -1,0 +1,26 @@
+# A price table for tests only, deliberately priced at an absurd rate so a
+# budget test can reason about exact figures without a long run.
+#
+# One million per million tokens is exactly 1.00 USD per token, so a case
+# costing "about fifteen tokens" costs about fifteen dollars and the running
+# budget crosses a small cap after a predictable number of cases.
+#
+# Prices are quoted as strings so they parse into exact Decimals.
+id: test-prices
+version: "1"
+currency: USD
+source: "test fixture; not a real vendor price list"
+models:
+  - provider: fake
+    model: fake-budget
+    match: exact
+    input_per_mtok: "1000000"
+    output_per_mtok: "1000000"
+    notes: "1.00 USD per token, so budget arithmetic in tests is exact."
+
+  - provider: fake
+    model: fake-
+    match: prefix
+    input_per_mtok: "0"
+    output_per_mtok: "0"
+    notes: "Every other fake model is free, matching the shipped table."
