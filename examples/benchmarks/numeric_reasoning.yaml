@@ -1,0 +1,83 @@
+# Numeric reasoning with tolerance.
+#
+# `numeric_tolerance` extracts a number from the response and compares it to
+# `expected` (or a `params.expected` override) with an absolute and/or
+# relative tolerance, following `math.isclose` semantics: a value passes when
+# EITHER configured tolerance is satisfied. With neither tolerance set the
+# comparison is exact. A response containing no number is a FAILED evaluation
+# (the evaluator worked; the answer just wasn't a number), not an ERROR.
+#
+#   uv run llm-eval run examples/benchmarks/numeric_reasoning.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: numeric-reasoning
+version: "1"
+description: >-
+  Arithmetic and estimation questions checked with numeric_tolerance under
+  absolute and relative tolerances.
+
+defaults:
+  system: Answer with the number only.
+  params:
+    temperature: 0.0
+    max_output_tokens: 32
+  tags:
+    - numeric
+
+cases:
+  - id: simple-addition
+    category: arithmetic
+    input: What is 47 + 58?
+    expected: 105
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          abs_tol: 0.0
+
+  - id: pi-two-decimals
+    category: arithmetic
+    input: What is pi, to two decimal places?
+    expected: 3.14
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          abs_tol: 0.01
+
+  - id: percentage-of-total
+    category: arithmetic
+    input: What is 15% of 240?
+    expected: 36
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          abs_tol: 0.5
+
+  - id: large-number-relative-tolerance
+    category: estimation
+    input: Approximately how many seconds are in a year? Round to the nearest million.
+    expected: 31000000
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          rel_tol: 0.05
+
+  - id: square-root-first-number
+    category: arithmetic
+    input: >-
+      What is the square root of 144? Show your reasoning first, then state
+      the final numeric answer.
+    expected: 12
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          extract: last
+          abs_tol: 0.0
+
+  - id: negative-number
+    category: arithmetic
+    input: What is 10 minus 25?
+    expected: -15
+    evaluators:
+      - type: numeric_tolerance
+        params:
+          abs_tol: 0.0

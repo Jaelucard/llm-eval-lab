@@ -1,0 +1,74 @@
+# Exact-match question answering.
+#
+# The simplest evaluation style: a short factual question with one correct
+# short answer, checked with `exact_match` (case-sensitive) or `exact_match_ci`
+# (case-insensitive). Good for closed-form facts where "close but not exact"
+# should not count — dates, names, single numbers rendered as words, and so
+# on. For anything where a correct answer can be phrased several ways, prefer
+# `contains`, `numeric_tolerance` or a similarity/judge evaluator instead —
+# see examples/benchmarks/similarity_paraphrase.yaml and
+# examples/benchmarks/judge_rubric.yaml.
+#
+# Try it against the deterministic fake provider:
+#   uv run llm-eval run examples/benchmarks/exact_match_qa.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: exact-match-qa
+version: "1"
+description: >-
+  Short factual questions checked with exact_match and exact_match_ci.
+
+defaults:
+  system: Answer with only the requested fact. No punctuation, no explanation.
+  params:
+    temperature: 0.0
+    max_output_tokens: 32
+  tags:
+    - qa
+    - exact-match
+
+cases:
+  - id: capital-of-japan
+    category: geography
+    input: What is the capital of Japan?
+    expected: Tokyo
+    evaluators:
+      - type: exact_match
+
+  - id: author-of-hamlet
+    category: literature
+    input: Who wrote Hamlet?
+    expected: William Shakespeare
+    evaluators:
+      - type: exact_match
+
+  - id: element-symbol-gold
+    category: science
+    input: What is the chemical symbol for gold, capitalized correctly?
+    expected: Au
+    evaluators:
+      - type: exact_match
+
+  - id: capital-of-canada-ci
+    category: geography
+    input: Name the capital of Canada. Any letter case is fine.
+    expected: ottawa
+    evaluators:
+      - type: exact_match_ci
+
+  - id: smallest-prime-ci
+    category: mathematics
+    input: What is the smallest prime number, spelled out as a word?
+    expected: TWO
+    evaluators:
+      - type: exact_match_ci
+
+  - id: whitespace-tolerant
+    category: formatting
+    input: Reply with the word "hello" and nothing else.
+    expected: "  hello  "
+    evaluators:
+      - type: exact_match
+        params:
+          strip: true
+          normalize_whitespace: true

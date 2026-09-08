@@ -1,0 +1,113 @@
+# Similarity scoring: lexical overlap vs. semantic (embedding) similarity.
+#
+# See docs/evaluators.md, "The two similarity evaluators, kept deliberately
+# apart," for why `lexical_similarity` and `semantic_similarity` are
+# separate evaluators with no code path between them, and for threshold
+# guidance for each.
+#
+# RUNNING THIS SUITE: the deterministic fake provider implements the
+# `EmbeddingProvider` capability (see `llm_eval_lab.providers.fake`), so the
+# `semantic-similarity-shape-demo` case below runs, and passes, offline --
+# no vendor credential needed. Its vectors are a hash of the text, not a
+# model's understanding of it: they let the evaluator's own plumbing
+# (embedding, cosine, thresholding, the `method` tag) be exercised for free,
+# but they carry no actual semantic content. A suite that wants a genuine
+# MEANING check needs a real embedding-capable provider such as `openai`
+# with model `text-embedding-3-small`.
+#
+# "Runs green" for this suite means the process completes successfully
+# (exit code 0, no evaluator errors) -- it does NOT mean every case passes.
+# The `honest-failure-different-wording` case below is a deliberate,
+# reproducible demonstration of lexical_similarity correctly reporting a
+# LOW score for a genuinely correct paraphrase, precisely because that is
+# the documented limitation of surface-overlap similarity. A failing case
+# is not a broken suite; it is what an honest evaluator is supposed to do
+# when the check it runs does not apply well to the answer it is given.
+#
+#   uv run llm-eval run examples/benchmarks/similarity_paraphrase.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: similarity-paraphrase
+version: "1"
+description: >-
+  Paraphrase-tolerant answers checked with lexical_similarity and
+  semantic_similarity, both running offline against the fake provider.
+
+defaults:
+  system: Answer the question in a full sentence.
+  params:
+    temperature: 0.0
+    max_output_tokens: 64
+  tags:
+    - similarity
+
+cases:
+  - id: paraphrase-token-set
+    category: paraphrase
+    input: Describe what photosynthesis does, in one sentence.
+    expected: >-
+      Photosynthesis is the process by which plants convert light energy
+      into chemical energy stored in glucose.
+    evaluators:
+      - type: lexical_similarity
+        params:
+          threshold: 0.3
+          method: token_set
+
+  - id: paraphrase-char-ngram
+    category: paraphrase
+    input: What does a thermostat do?
+    expected: A thermostat regulates temperature by controlling heating or cooling.
+    evaluators:
+      - type: lexical_similarity
+        params:
+          threshold: 0.3
+          method: char_ngram
+          ngram: 4
+
+  - id: honest-failure-different-wording
+    category: paraphrase
+    # `expected` here is deliberately the plain-language phrasing: under this
+    # suite's `--fake-mode expected` run, the fake provider returns THIS text
+    # verbatim as the response. The evaluator below overrides its comparison
+    # target with `params.expected` -- a genuinely correct but differently
+    # worded (more technical) reference answer -- so the score is computed
+    # between two real, different strings rather than a string compared with
+    # itself. This reproduces, deterministically and offline, the failure
+    # mode docs/evaluators.md warns about: a correct paraphrase sharing little
+    # vocabulary with the reference scores low on surface overlap alone.
+    input: Explain briefly why the sky appears blue.
+    expected: >-
+      The sky looks blue because blue light bends and scatters more than
+      other colors when sunlight passes through the air.
+    evaluators:
+      - type: lexical_similarity
+        params:
+          expected: >-
+            The sky appears blue due to Rayleigh scattering, where shorter
+            wavelengths of sunlight are scattered more than longer
+            wavelengths by atmospheric molecules.
+          threshold: 0.5
+          method: token_set
+
+  - id: semantic-similarity-shape-demo
+    category: paraphrase
+    input: What is the boiling point of water at sea level?
+    expected: Water boils at 100 degrees Celsius (212 degrees Fahrenheit) at sea level.
+    metadata:
+      note: >-
+        Demonstrates semantic_similarity's required `embedding_provider`
+        shape, running against the fake provider's deterministic embeddings
+        (see the suite-level comment above). Substitute a real
+        embedding-capable provider (e.g. `openai` with model
+        `text-embedding-3-small`) for an actual meaning check; the fake
+        provider's vectors are a hash of the text, not a model's
+        understanding of it.
+    evaluators:
+      - type: semantic_similarity
+        required: true
+        params:
+          embedding_provider:
+            provider: fake
+            model: fake-embed
+          threshold: 0.82

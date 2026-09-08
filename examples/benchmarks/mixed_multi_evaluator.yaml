@@ -1,0 +1,103 @@
+# Multi-evaluator cases.
+#
+# A case can carry more than one evaluator. The case passes only when every
+# evaluator with `required: true` passes (the default); an evaluator with
+# `required: false` still runs and is recorded in per-evaluator metrics, but
+# cannot by itself fail the case. See docs/benchmark-format.md, "the
+# multi-evaluator pass rule," for `on_error` and the full semantics.
+#
+# This suite pairs a structural check (regex/contains — near-deterministic
+# formatting) with a content check (exact_match/numeric_tolerance —
+# correctness), so a response that gets the format right but the content
+# wrong, or vice versa, is visible in per-evaluator metrics even though the
+# case as a whole fails either way.
+#
+#   uv run llm-eval run examples/benchmarks/mixed_multi_evaluator.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: mixed-multi-evaluator
+version: "1"
+description: >-
+  Cases requiring multiple evaluators to agree: a structural check plus a
+  content check.
+
+defaults:
+  params:
+    temperature: 0.0
+    max_output_tokens: 64
+  tags:
+    - multi-evaluator
+
+cases:
+  - id: order-confirmation-format-and-content
+    category: formatting
+    system: >-
+      Reply with exactly one line: "ORDER #<number> CONFIRMED", where
+      <number> is the order number given in the question.
+    input: Confirm order number 4471.
+    expected: "ORDER #4471 CONFIRMED"
+    evaluators:
+      - type: regex
+        id: format-check
+        params:
+          pattern: "^ORDER #[0-9]+ CONFIRMED$"
+          must_match: true
+      - type: exact_match
+        id: content-check
+        params:
+          expected: "ORDER #4471 CONFIRMED"
+
+  - id: price-quote-required-and-optional
+    category: arithmetic
+    system: State the total price in dollars, then briefly explain the calculation.
+    input: An item costs $40 with 7.5% sales tax. What is the total price?
+    expected: 43.0
+    evaluators:
+      - type: numeric_tolerance
+        id: total-correct
+        required: true
+        params:
+          abs_tol: 0.01
+      - type: contains
+        id: explanation-present
+        required: false
+        params:
+          values: ["tax"]
+          case_sensitive: false
+
+  - id: capital-with-fallback-tolerance
+    category: geography
+    input: What is the capital of Australia? Many people incorrectly guess Sydney.
+    expected: Canberra
+    evaluators:
+      - type: exact_match_ci
+        id: exact-answer
+        required: true
+      - type: regex
+        id: no-sydney-mentioned
+        required: true
+        on_error: fail
+        params:
+          pattern: "(?i)sydney"
+          must_match: false
+
+  - id: two-part-numeric-answer
+    category: arithmetic
+    system: >-
+      Answer with two numbers separated by a comma: the sum, then the
+      product, of 6 and 7.
+    input: Give the sum and product of 6 and 7.
+    expected: "13, 42"
+    evaluators:
+      - type: regex
+        id: shape-check
+        required: true
+        params:
+          pattern: "^\\s*\\d+\\s*,\\s*\\d+\\s*$"
+          must_match: true
+      - type: contains
+        id: values-present
+        required: true
+        params:
+          values: ["13", "42"]
+          mode: all

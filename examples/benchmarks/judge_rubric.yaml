@@ -1,0 +1,158 @@
+# LLM-as-judge grading against a weighted rubric.
+#
+# See docs/evaluators.md, "llm_judge", for the full methodology: strict
+# verdict parsing with one repair attempt, the weighted-criteria overall
+# score computed by this project rather than trusted from the judge, the
+# self_preference_risk and high_judge_variance advisory flags, and the five
+# documented limitations of LLM-as-judge evaluation.
+#
+# RUNNING THIS SUITE: the judge's own provider is configured per case, right
+# here in this file, as `fake` in `mode: scripted` with a canned verdict
+# JSON in `fallback`. The fake provider's `scripted` mode looks a judge call
+# up by case id, but a judge call's provider request carries no case-id
+# metadata (only the primary candidate call does), so the lookup always
+# misses and `fallback` always applies -- which is exactly what makes a
+# deterministic, offline-runnable judge example possible without a real
+# judge model or an API key. Every judge call in this suite therefore
+# returns the same scripted verdict text; the two cases below differ in the
+# verdict text itself, not in anything about how the model or the judge
+# were configured.
+#
+# This is a demonstration technique for this repository's fake provider, not
+# a documented feature of `llm_judge` in general: a real judge model
+# genuinely reads the prompt and genuinely varies its answer by case.
+#
+#   uv run llm-eval run examples/benchmarks/judge_rubric.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: judge-rubric
+version: "1"
+description: >-
+  LLM-as-judge grading with a weighted two-criterion rubric, scored by a
+  scripted fake judge so the suite runs deterministically offline.
+
+defaults:
+  params:
+    temperature: 0.0
+    max_output_tokens: 128
+  tags:
+    - judge
+
+cases:
+  - id: strong-answer
+    category: reasoning
+    input: >-
+      What is the capital of France, and why has it historically been an
+      important political center?
+    expected: >-
+      Paris is the capital of France. It has been a political center since
+      medieval times, as the seat of French kings and later of the Republic.
+    evaluators:
+      - type: llm_judge
+        params:
+          provider:
+            provider: fake
+            model: fake-judge
+            options:
+              mode: scripted
+              fallback: >-
+                {"overall_score": 4.6, "criteria": [{"name": "correctness",
+                "score": 5, "rationale": "States the correct capital with no
+                factual errors."}, {"name": "completeness", "score": 4,
+                "rationale": "Explains the historical significance, though
+                briefly."}], "rationale": "Strong, accurate answer that
+                addresses both parts of the question.", "confidence": 0.9}
+          rubric: >-
+            Score how well the candidate answers the question, using the
+            reference answer as a guide for what a complete answer covers.
+          criteria:
+            - id: correctness
+              description: Does the answer state the correct capital?
+              weight: 0.6
+            - id: completeness
+              description: >-
+                Does it also address the historical-significance part of
+                the question?
+              weight: 0.4
+          scale:
+            kind: integer
+            minimum: 1
+            maximum: 5
+            labels:
+              "1": "Factually wrong or entirely off-topic."
+              "3": "Partially correct or addresses only part of the question."
+              "5": "Fully correct and complete."
+          pass_threshold: 3
+
+  - id: weak-answer
+    category: reasoning
+    input: What is the capital of France, and why has it historically been important?
+    expected: >-
+      Paris is the capital of France. It has been a political center since
+      medieval times, as the seat of French kings and later of the Republic.
+    evaluators:
+      - type: llm_judge
+        params:
+          provider:
+            provider: fake
+            model: fake-judge
+            options:
+              mode: scripted
+              fallback: >-
+                {"overall_score": 2.2, "criteria": [{"name": "correctness",
+                "score": 3, "rationale": "Names a plausible-sounding city but
+                does not clearly state Paris."}, {"name": "completeness",
+                "score": 1, "rationale": "Does not address the historical
+                significance part of the question at all."}], "rationale":
+                "Answer is vague on the core fact and omits the second half
+                of the question entirely.", "confidence": 0.85}
+          rubric: >-
+            Score how well the candidate answers the question, using the
+            reference answer as a guide for what a complete answer covers.
+          criteria:
+            - id: correctness
+              description: Does the answer state the correct capital?
+              weight: 0.6
+            - id: completeness
+              description: >-
+                Does it also address the historical-significance part of
+                the question?
+              weight: 0.4
+          scale:
+            kind: integer
+            minimum: 1
+            maximum: 5
+          pass_threshold: 3
+
+  - id: self-preference-demo
+    category: bias-demo
+    input: Summarize why Paris is significant in one sentence.
+    expected: Paris is the capital and largest city of France.
+    metadata:
+      note: >-
+        This case's judge model is deliberately the SAME provider and model
+        as the candidate ("fake"/"fake-1", when this suite is run with
+        --provider fake --model fake-1 as shown above), so it demonstrates
+        JudgeProvenance.self_preference_risk being set to true. The flag is
+        advisory only: it never blocks the run, it only makes the risk
+        visible in the stored result. Running this suite against a
+        different --model leaves the flag false, since the judge model
+        here is pinned to fake-1 regardless of the candidate model chosen.
+    evaluators:
+      - type: llm_judge
+        params:
+          provider:
+            provider: fake
+            model: fake-1
+            options:
+              mode: scripted
+              fallback: >-
+                {"overall_score": 4.0, "rationale": "Clear, correct
+                one-sentence summary.", "confidence": 0.8}
+          rubric: Score the summary for correctness and concision.
+          use_reference: true
+          scale:
+            kind: integer
+            minimum: 1
+            maximum: 5
+          pass_threshold: 3

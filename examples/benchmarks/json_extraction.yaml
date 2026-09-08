@@ -1,0 +1,167 @@
+# JSON extraction, checked with the dedicated json_valid and json_schema
+# evaluators.
+#
+# See docs/evaluators.md for full parameter references. `json_schema` gives
+# partial credit -- score = 1 / (n_errors + 1) -- and lists every violation
+# in metadata["errors"], so a response that gets three of four fields right
+# is visibly better than one that gets none, not just uniformly "failed".
+# Remote $ref is refused at benchmark load time (a benchmark file must never
+# make schema validation issue an outbound request); every schema below
+# uses only inline definitions.
+#
+#   uv run llm-eval run examples/benchmarks/json_extraction.yaml \
+#     --provider fake --model fake-1 --fake-mode expected --json
+schema_version: 1
+name: json-extraction
+version: "1"
+description: >-
+  Structured-extraction cases checked with json_valid and json_schema.
+
+defaults:
+  system: >-
+    Respond with a single-line JSON object only. No markdown code fences, no
+    explanation before or after the JSON.
+  params:
+    temperature: 0.0
+    max_output_tokens: 128
+    response_format: json_object
+  tags:
+    - json
+    - extraction
+
+cases:
+  - id: extract-name-and-age
+    category: extraction
+    input: >-
+      Extract the name and age from: "Dr. Amara Okafor, 42, presented the
+      findings." Respond as {"name": "...", "age": ...}.
+    expected: '{"name": "Amara Okafor", "age": 42}'
+    evaluators:
+      - type: json_valid
+        id: is-valid-json
+        params:
+          require_object: true
+      - type: json_schema
+        id: matches-schema
+        params:
+          schema:
+            type: object
+            required: [name, age]
+            properties:
+              name: {type: string}
+              age: {type: integer, minimum: 0}
+            additionalProperties: true
+
+  - id: extract-order-fields
+    category: extraction
+    input: >-
+      Extract structured fields from: "Order #8823 for 3 units of SKU-119,
+      shipped on 2025-03-14." Respond as
+      {"order_id": ..., "quantity": ..., "sku": "...", "ship_date": "..."}.
+    expected: >-
+      {"order_id": 8823, "quantity": 3, "sku": "SKU-119", "ship_date": "2025-03-14"}
+    evaluators:
+      - type: json_schema
+        id: matches-schema
+        params:
+          schema:
+            type: object
+            required: [order_id, quantity, sku, ship_date]
+            properties:
+              order_id: {type: integer}
+              quantity: {type: integer, minimum: 1}
+              sku: {type: string}
+              ship_date: {type: string}
+
+  - id: no-markdown-fence
+    category: formatting
+    input: >-
+      Extract the color mentioned in: "The car was painted a deep forest
+      green." Respond as {"color": "..."}.
+    expected: '{"color": "forest green"}'
+    evaluators:
+      - type: json_valid
+        id: is-valid-json
+        params:
+          require_object: true
+          allow_markdown_fence: false
+
+  - id: extract-boolean-field
+    category: extraction
+    input: >-
+      Extract whether the order was expedited from: "Standard shipping was
+      used; no rush fee was applied." Respond as {"expedited": true or false}.
+    expected: '{"expedited": false}'
+    evaluators:
+      - type: json_schema
+        id: matches-schema
+        params:
+          schema:
+            type: object
+            required: [expedited]
+            properties:
+              expedited: {type: boolean}
+
+  - id: nested-object
+    category: extraction
+    input: >-
+      Extract the address from: "Ships to 12 Elm Street, Springfield." Respond
+      as {"address": {"street": "...", "city": "..."}}.
+    expected: '{"address": {"street": "12 Elm Street", "city": "Springfield"}}'
+    evaluators:
+      - type: json_schema
+        id: matches-schema
+        params:
+          schema:
+            type: object
+            required: [address]
+            properties:
+              address:
+                type: object
+                required: [street, city]
+                properties:
+                  street: {type: string}
+                  city: {type: string}
+
+  - id: array-field
+    category: extraction
+    input: >-
+      Extract the list of tags from: "Tagged as urgent, billing, and
+      escalated." Respond as {"tags": ["...", "...", "..."]}.
+    expected: '{"tags": ["urgent", "billing", "escalated"]}'
+    evaluators:
+      - type: json_schema
+        id: matches-schema
+        params:
+          schema:
+            type: object
+            required: [tags]
+            properties:
+              tags:
+                type: array
+                minItems: 1
+                items: {type: string}
+
+  - id: partial-credit-demo
+    category: extraction
+    # Deliberately mismatched: the case's expected answer (what the fake
+    # provider returns under --fake-mode expected) is missing one required
+    # field and has the wrong type for another, so json_schema reports two
+    # violations and scores 1/(2+1) = 0.333... rather than a bare fail --
+    # demonstrating the partial-credit scoring docs/evaluators.md describes.
+    input: >-
+      Extract the product id and price from: "Widget WX-100 costs $19.99."
+      Respond as {"product_id": "...", "price": ...}.
+    expected: '{"product_id": "WX-100", "price": "19.99"}'
+    evaluators:
+      - type: json_schema
+        id: matches-schema
+        required: false
+        params:
+          schema:
+            type: object
+            required: [product_id, price, currency]
+            properties:
+              product_id: {type: string}
+              price: {type: number}
+              currency: {type: string}
