@@ -17,6 +17,7 @@ this API starts runs that spend money against the operator's credentials.
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from llm_eval_lab.cli.output import stderr_console
 from llm_eval_lab.reporting.formatters import markup_safe
@@ -46,6 +47,7 @@ def serve(
     from llm_eval_lab.api.errors import InsecureBindError  # noqa: PLC0415 - deferred
     from llm_eval_lab.api.server import run_server  # noqa: PLC0415 - deferred
     from llm_eval_lab.cli.main import ExitCode, app_context  # noqa: PLC0415 - avoids a cycle
+    from llm_eval_lab.settings import Settings  # noqa: PLC0415 - kept beside the import above
 
     context = app_context(ctx)
     console = stderr_console(color=context.color)
@@ -55,7 +57,23 @@ def serve(
         overrides["api_host"] = host
     if port is not None:
         overrides["api_port"] = port
-    settings = context.settings.model_copy(update=overrides) if overrides else context.settings
+
+    if overrides:
+        # A validated rebuild, not `context.settings.model_copy(update=...)`:
+        # `model_copy` writes the override straight onto the model, bypassing
+        # every field validator - so `--host ""` or `--port 70000` would reach
+        # `create_app` and `build_server` having skipped the very checks that
+        # exist to refuse them. `model_validate` re-runs every validator over
+        # the merged data and never touches the environment itself (only
+        # `Settings.__init__` gathers env/`.env` sources), so this cannot pick
+        # up a variable that changed since `context.settings` was built.
+        try:
+            settings = Settings.model_validate({**context.settings.model_dump(), **overrides})
+        except ValidationError as exc:
+            console.print(f"[red]refusing to start:[/red] {markup_safe(exc)}")
+            raise typer.Exit(int(ExitCode.USAGE)) from exc
+    else:
+        settings = context.settings
 
     try:
         application = create_app(settings, bind_host=settings.api_host)

@@ -17,7 +17,7 @@ import pytest
 import structlog
 from pydantic import SecretStr, ValidationError
 
-from llm_eval_lab.api.app import create_app
+from llm_eval_lab.api.app import create_app, require_loopback_or_token
 from llm_eval_lab.api.errors import InsecureBindError
 from llm_eval_lab.api.routers.runs import _attachment
 from llm_eval_lab.api.server import build_server
@@ -360,6 +360,54 @@ def test_the_server_entry_point_binds_the_host_it_was_given(api_settings: Settin
     assert server.config.port == 8124
 
 
+# -- S-4: a blank host is bind-all, and is refused unconditionally -----------
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("blank", ["", " ", "\t"])
+def test_a_blank_host_is_refused_even_with_a_token_configured(
+    api_settings: Settings, blank: str
+) -> None:
+    """An empty or whitespace host is uvicorn's own spelling of bind-all.
+
+    It is not a bind address an operator chose, so a token being configured
+    does not save it - unlike a genuine non-loopback address, this is refused
+    unconditionally.
+    """
+    guarded = api_settings.model_copy(update={"api_token": SecretStr(TOKEN)})
+    with pytest.raises(InsecureBindError):
+        require_loopback_or_token(guarded, blank)
+
+
+@pytest.mark.integration
+def test_a_blank_host_without_a_token_is_also_refused() -> None:
+    settings = Settings(_env_file=None, api_host="127.0.0.1", api_token=None)
+    with pytest.raises(InsecureBindError):
+        require_loopback_or_token(settings, " ")
+
+
+@pytest.mark.integration
+def test_a_wildcard_bind_without_a_token_is_refused(api_settings: Settings) -> None:
+    with pytest.raises(InsecureBindError, match="LLM_EVAL_API_TOKEN"):
+        require_loopback_or_token(api_settings, NON_LOOPBACK)
+
+
+@pytest.mark.integration
+def test_build_server_refuses_a_blank_host(api_settings: Settings) -> None:
+    guarded = api_settings.model_copy(update={"api_token": SecretStr(TOKEN)})
+    with pytest.raises(InsecureBindError):
+        build_server(create_app(guarded), guarded, host="", port=8123)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("bad_port", [0, -1, 70000])
+def test_build_server_refuses_a_port_outside_the_valid_range(
+    api_settings: Settings, bad_port: int
+) -> None:
+    with pytest.raises(InsecureBindError):
+        build_server(create_app(api_settings), api_settings, host="127.0.0.1", port=bad_port)
+
+
 # -- S-3: a hostile Authorization header must not crash the gate -------------
 
 
@@ -661,3 +709,34 @@ async def test_launching_beyond_the_process_cap_is_refused(
     second = await api_client.post("/api/runs", json=slow)
     assert second.status_code == 429, second.text
     assert second.json()["type"] == "/problems/too-many-runs"
+
+
+# -- token-protected mode does not lock the dashboard's own door out --------
+
+
+@pytest.mark.integration
+async def test_the_dashboard_shell_stays_reachable_without_a_token(
+    guarded_settings: Settings,
+    client_for: ClientFactory,
+) -> None:
+    """`/` is mounted outside the `/api` guard, so the page can always load.
+
+    The bundled dashboard never holds or sends the bearer token (see
+    `README.md#the-dashboard`) - it is a static file served unauthenticated -
+    while the data it tries to fetch from `/api/*` still needs one. This is
+    what lets the frontend detect token mode and explain it instead of
+    failing to load at all.
+    """
+    async with client_for(create_app(guarded_settings)) as client:
+        shell = await client.get("/")
+        assert shell.status_code == 200
+
+        health_response = await client.get("/api/health")
+        assert health_response.status_code == 200
+
+        unauthenticated = await client.get("/api/version")
+        assert unauthenticated.status_code == 401
+        assert unauthenticated.headers["www-authenticate"] == "Bearer"
+
+        authorised = await client.get("/api/version", headers={"Authorization": f"Bearer {TOKEN}"})
+        assert authorised.status_code == 200

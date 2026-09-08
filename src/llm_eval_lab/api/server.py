@@ -27,7 +27,11 @@ import uvicorn
 from fastapi import FastAPI
 
 from llm_eval_lab.api.app import require_loopback_or_token
+from llm_eval_lab.api.errors import InsecureBindError
 from llm_eval_lab.settings import Settings
+
+_MIN_PORT = 1
+_MAX_PORT = 65535
 
 
 def build_server(
@@ -46,11 +50,27 @@ def build_server(
     :func:`run_server` so a caller - a test, or a future supervisor - can inspect
     the configuration, and so the refusal is observable without starting a socket.
 
+    The port is range-checked here too, for the same reason: `settings.api_port`
+    is bounded by a pydantic ``Field(ge=1, le=65535)``, but `port` is a plain
+    argument any caller - including ``llm-eval serve --port``, before its own
+    rebuild-and-validate step runs - can hand this function directly. Reusing
+    :class:`InsecureBindError` rather than adding a second exception type is the
+    smaller change: both failures mean "refuse to open this socket", both are
+    already caught and reported identically by every caller, and a caller that
+    wants to tell them apart can still inspect the message.
+
     Raises:
-        InsecureBindError: when the bind would expose an unauthenticated API.
+        InsecureBindError: when the bind would expose an unauthenticated API,
+            or when `port` is outside 1-65535.
     """
     bind_host = settings.api_host if host is None else host
     bind_port = settings.api_port if port is None else port
+    if not _MIN_PORT <= bind_port <= _MAX_PORT:
+        msg = (
+            f"refusing to bind port {bind_port}: a port must be between "
+            f"{_MIN_PORT} and {_MAX_PORT}."
+        )
+        raise InsecureBindError(msg)
     require_loopback_or_token(settings, bind_host)
     return uvicorn.Server(
         uvicorn.Config(

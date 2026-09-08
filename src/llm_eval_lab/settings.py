@@ -27,6 +27,7 @@ are not simple scalars (``cors_origins``, ``plugins_allowed``) are parsed as
 JSON, so ``LLM_EVAL_PLUGINS_ALLOWED='["acme_evals"]'``.
 """
 
+import ipaddress
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -38,10 +39,31 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from llm_eval_lab.models import EvaluatorSettings
 
-_LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
-
 _DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "llm-eval-lab"
 _DEFAULT_DEV_ORIGIN = "http://localhost:5173"
+
+
+def is_loopback_host(host: str) -> bool:
+    """Report whether `host` is an address only this machine can reach.
+
+    True only for a genuine loopback address - anything in ``127.0.0.0/8``,
+    ``::1``, an IPv6 literal in bracket notation (``[::1]``), or the exact
+    hostname ``localhost`` (case-insensitive) - and False for everything else,
+    including the empty string, whitespace, ``"0.0.0.0"``, ``"::"``, a glob
+    like ``"*.localhost"`` that matches nothing as a literal host, and a
+    hostname carrying incidental whitespace such as a trailing space.
+
+    This is the one function both `Settings.api_bind_is_loopback` and
+    `llm_eval_lab.api.app.require_loopback_or_token` call, so the two cannot
+    quietly disagree about what counts as safe to bind unauthenticated. It
+    never strips or otherwise normalises `host`: a value that needs
+    normalising to pass is treated as not loopback, not silently corrected.
+    """
+    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return candidate.lower() == "localhost"
 
 
 @lru_cache(maxsize=1)
@@ -189,6 +211,30 @@ class Settings(BaseSettings):
             return None
         return value if value.get_secret_value().strip() else None
 
+    @field_validator("api_host")
+    @classmethod
+    def _reject_blank_or_whitespace_host(cls, value: str) -> str:
+        """Refuse a host that is empty, whitespace-only, or contains whitespace.
+
+        An empty string is uvicorn's own spelling of "bind every interface",
+        not "unset" or "use the default" - `uvicorn.Config(host="")` binds
+        the wildcard address. A value coming from `--host ""` or
+        `LLM_EVAL_API_HOST=` must therefore never reach the server as a host
+        at all. Whitespace-only and whitespace-containing values are rejected
+        for the same reason: they are not a bind address an operator chose,
+        they are almost certainly a shell-quoting accident, and silently
+        stripping them would hide that accident rather than surface it.
+        """
+        if not value or any(ch.isspace() for ch in value):
+            msg = (
+                "api_host must not be empty or contain whitespace: an empty host is "
+                'uvicorn\'s own spelling of bind-all, not "unset", and would expose an '
+                "unauthenticated API to the network. Set an explicit address, e.g. "
+                "127.0.0.1."
+            )
+            raise ValueError(msg)
+        return value
+
     @field_validator("cors_origins")
     @classmethod
     def _reject_wildcard_origin(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -210,7 +256,7 @@ class Settings(BaseSettings):
     @property
     def api_bind_is_loopback(self) -> bool:
         """Report whether the configured bind address is loopback-only."""
-        return self.api_host in _LOOPBACK_HOSTS
+        return is_loopback_host(self.api_host)
 
     def resolved_database_url(self) -> str:
         """Return the database URL, deriving a per-user SQLite path when unset."""

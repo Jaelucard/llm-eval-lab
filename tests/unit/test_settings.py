@@ -25,6 +25,7 @@ from llm_eval_lab.settings import (
     _dotenv_path,
     _load_dotenv_once,
     get_settings,
+    is_loopback_host,
     read_credential,
 )
 
@@ -72,6 +73,46 @@ def test_api_binds_to_loopback_by_default() -> None:
 
 def test_a_non_loopback_bind_is_visible_to_the_startup_check() -> None:
     assert Settings(_env_file=None, api_host="0.0.0.0").api_bind_is_loopback is False  # noqa: S104 - asserting the check fires, not binding
+
+
+# --- is_loopback_host -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["127.0.0.1", "127.0.0.2", "::1", "[::1]", "localhost", "LOCALHOST"],
+)
+def test_is_loopback_host_accepts_genuine_loopback_addresses(host: str) -> None:
+    assert is_loopback_host(host) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        " ",
+        "0.0.0.0",  # noqa: S104 - a value under test, never bound
+        "::",
+        "*",
+        "*.localhost",
+        "foo.localhost",
+        "10.0.0.1",
+        "example.com",
+        "127.0.0.1 ",
+    ],
+)
+def test_is_loopback_host_rejects_everything_else(host: str) -> None:
+    assert is_loopback_host(host) is False
+
+
+# --- api_host validation -----------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["", " ", "\t", "0.0.0.0 leading-space "])
+def test_a_blank_or_whitespace_containing_api_host_is_refused(value: str) -> None:
+    """An empty host is uvicorn's own spelling of bind-all, not "unset"."""
+    with pytest.raises(ValidationError, match="api_host"):
+        Settings(_env_file=None, api_host=value)
 
 
 @pytest.mark.parametrize("value", ["", " ", "\t", "\n  \t"])

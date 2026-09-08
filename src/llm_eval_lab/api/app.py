@@ -69,7 +69,7 @@ from llm_eval_lab.services import (
     build_run_service,
     open_unit_of_work_factory,
 )
-from llm_eval_lab.settings import Settings, get_settings
+from llm_eval_lab.settings import Settings, get_settings, is_loopback_host
 from llm_eval_lab.utils.time import utc_now
 
 API_TITLE = "llm-eval-lab"
@@ -83,12 +83,17 @@ API_DESCRIPTION = (
 BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
 """Methods whose request body is capped."""
 
-LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost", "", "*.localhost"})
-"""Addresses only this machine can reach.
+LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
+"""Documentation only. The actual check is `llm_eval_lab.settings.is_loopback_host`.
 
-Kept here rather than read off `Settings.api_bind_is_loopback`, because the bind
-check now takes the address the SERVER was given, which is not always the one in
-the settings. The empty string is uvicorn's own spelling of "bind nothing yet".
+Kept and exported for anything that wants a quick, non-exhaustive example of
+what counts as loopback; `require_loopback_or_token` never reads this set
+itself, because the bind check now takes the address the SERVER was given,
+which is not always the one in the settings, and because a finite set cannot
+express "any address in 127.0.0.0/8" or "``[::1]`` in bracket notation" the way
+`is_loopback_host` does. The empty string used to live in this set - it is
+uvicorn's own spelling of "bind every interface", not a loopback address, and
+is refused outright rather than treated as safe.
 """
 
 SECURITY_HEADERS: dict[str, str] = {
@@ -284,11 +289,26 @@ def require_loopback_or_token(settings: Settings, host: str | None = None) -> No
     somewhere else. Callers that know the real address pass it;
     :func:`llm_eval_lab.api.server.build_server` is the one that always does.
 
+    A blank or whitespace-only `host` is refused unconditionally, even with
+    `settings.api_token` set: it is not a bind address an operator chose, it is
+    uvicorn's own spelling of "bind every interface", and a caller that means
+    to bind everywhere should say so with an explicit ``0.0.0.0`` or ``::``
+    rather than by omission.
+
     Raises:
-        InsecureBindError: when the bind would expose an unauthenticated API.
+        InsecureBindError: when the bind would expose an unauthenticated API,
+            or when `host` is blank.
     """
     bind = settings.api_host if host is None else host
-    if bind in LOOPBACK_HOSTS or settings.api_token is not None:
+    if not bind.strip():
+        msg = (
+            f"refusing to bind {bind!r}: a blank host is uvicorn's own spelling of "
+            f"bind-every-interface, not a bind address an operator chose, so it is "
+            f"refused whether or not LLM_EVAL_API_TOKEN is set. Bind an explicit "
+            f"address, e.g. 127.0.0.1, or 0.0.0.0 if binding everywhere is intended."
+        )
+        raise InsecureBindError(msg)
+    if is_loopback_host(bind) or settings.api_token is not None:
         return
     msg = (
         f"refusing to bind {bind}: an address other machines can reach "
