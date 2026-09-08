@@ -1,0 +1,295 @@
+# Price table shipped with the package.
+#
+# Every price is quoted per MILLION tokens, in USD, and is written as a QUOTED
+# STRING so it parses into an exact Decimal. An unquoted YAML float would go
+# through a binary double first and carry that rounding into every cost.
+#
+# Prices are transcribed from the vendors' official pricing pages, which are
+# recorded with their retrieval date in `docs/providers-sources.md`. Inventing
+# a vendor price here would produce cost figures nobody could audit, which is
+# the specific failure the `source` field exists to prevent. `version` is the
+# retrieval date, so a run's recorded price-table version says exactly which
+# day's published prices costed it.
+#
+# Scope, stated once so no cost figure is over-read:
+#   * Standard synchronous pricing only. Batch discounts (typically 50%),
+#     cache-WRITE premiums, and data-residency multipliers are not modelled.
+#   * `cached_input_per_mtok` is the cache-READ (cache-hit) price, which is the
+#     only cache figure the returned token counts let us apply.
+#   * Where a vendor tiers input price by context length, the base (smaller
+#     context) tier is quoted and the entry says so in `notes`.
+#   * `ollama` runs locally, so its marginal per-token price is zero. That is a
+#     true statement about tokens, not a claim that self-hosting is free.
+#   * `openai_compatible` has no entries on purpose: a third-party endpoint's
+#     price is set by whoever operates it, so a run against one records
+#     priced=false with a reason rather than a fabricated cost. Pass --prices
+#     with your own table to cost those runs.
+#
+# Matching is exact first, then longest prefix, then regex. Dated snapshot ids
+# (`gpt-5.1-2026-...`, `claude-haiku-4-5-20251001`) are covered by the prefix
+# entries, which is why prefixes are used for model families that ship dated
+# snapshots under a stable stem.
+id: builtin
+version: "2026-09-07"
+currency: USD
+source: >-
+  Official vendor pricing pages retrieved 2026-09-07:
+  https://developers.openai.com/api/docs/pricing (OpenAI),
+  https://platform.claude.com/docs/en/about-claude/pricing (Anthropic),
+  https://ai.google.dev/gemini-api/docs/pricing (Google).
+  Standard synchronous rates, per million tokens, USD.
+  See docs/providers-sources.md for the full retrieval record.
+models:
+  # --- fake ---------------------------------------------------------------
+  - provider: fake
+    model: fake-
+    match: prefix
+    input_per_mtok: "0"
+    output_per_mtok: "0"
+    notes: "The fake provider issues no requests, so its true cost is zero."
+
+  # --- ollama -------------------------------------------------------------
+  - provider: ollama
+    model: ".+"
+    match: regex
+    input_per_mtok: "0"
+    output_per_mtok: "0"
+    notes: >-
+      Ollama serves models on local hardware, so there is no per-token charge
+      to meter. Electricity and hardware are real costs but are not per-token
+      and are not this table's unit. Matched by regex rather than by an empty
+      prefix: every entry needs a non-empty model key, and ".+" says "any model
+      this server serves" without pretending to enumerate them.
+
+  # --- openai -------------------------------------------------------------
+  - provider: openai
+    model: gpt-5.5
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "30.00"
+    cached_input_per_mtok: "0.50"
+    notes: "Standard tier, prompts under the 272K-token context threshold."
+  - provider: openai
+    model: gpt-5.1
+    match: prefix
+    input_per_mtok: "1.25"
+    output_per_mtok: "10.00"
+    cached_input_per_mtok: "0.125"
+  - provider: openai
+    model: gpt-5-mini
+    match: prefix
+    input_per_mtok: "0.25"
+    output_per_mtok: "2.00"
+    cached_input_per_mtok: "0.025"
+  - provider: openai
+    model: gpt-5-nano
+    match: prefix
+    input_per_mtok: "0.05"
+    output_per_mtok: "0.40"
+    cached_input_per_mtok: "0.005"
+  - provider: openai
+    model: gpt-5
+    match: prefix
+    input_per_mtok: "1.25"
+    output_per_mtok: "10.00"
+    cached_input_per_mtok: "0.125"
+    notes: >-
+      Shorter prefix than gpt-5-mini and gpt-5-nano on purpose; longest-prefix
+      matching keeps those two on their own rates.
+  - provider: openai
+    model: gpt-4.1-mini
+    match: prefix
+    input_per_mtok: "0.40"
+    output_per_mtok: "1.60"
+    cached_input_per_mtok: "0.10"
+  - provider: openai
+    model: gpt-4.1
+    match: prefix
+    input_per_mtok: "2.00"
+    output_per_mtok: "8.00"
+    cached_input_per_mtok: "0.50"
+  - provider: openai
+    model: gpt-4o-mini
+    match: prefix
+    input_per_mtok: "0.15"
+    output_per_mtok: "0.60"
+    cached_input_per_mtok: "0.075"
+  - provider: openai
+    model: gpt-4o
+    match: prefix
+    input_per_mtok: "2.50"
+    output_per_mtok: "10.00"
+    cached_input_per_mtok: "1.25"
+  - provider: openai
+    model: o3-mini
+    match: prefix
+    input_per_mtok: "1.10"
+    output_per_mtok: "4.40"
+    cached_input_per_mtok: "0.55"
+  - provider: openai
+    model: o3
+    match: prefix
+    input_per_mtok: "2.00"
+    output_per_mtok: "8.00"
+    cached_input_per_mtok: "0.50"
+  - provider: openai
+    model: o1-pro
+    match: prefix
+    input_per_mtok: "150.00"
+    output_per_mtok: "600.00"
+    notes: "No cached-input rate is published for o1-pro."
+  - provider: openai
+    model: o1
+    match: prefix
+    input_per_mtok: "15.00"
+    output_per_mtok: "60.00"
+    cached_input_per_mtok: "7.50"
+
+  # --- anthropic ----------------------------------------------------------
+  - provider: anthropic
+    model: claude-fable-5-1
+    match: prefix
+    input_per_mtok: "10.00"
+    output_per_mtok: "50.00"
+    cached_input_per_mtok: "0.25"
+    notes: "Cache reads are 0.025x base input on this model, not the usual 0.1x."
+  - provider: anthropic
+    model: claude-fable-5
+    match: prefix
+    input_per_mtok: "10.00"
+    output_per_mtok: "50.00"
+    cached_input_per_mtok: "1.00"
+  - provider: anthropic
+    model: claude-opus-5
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
+    cached_input_per_mtok: "0.50"
+  - provider: anthropic
+    model: claude-opus-4-8
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
+    cached_input_per_mtok: "0.50"
+  - provider: anthropic
+    model: claude-opus-4-7
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
+    cached_input_per_mtok: "0.50"
+  - provider: anthropic
+    model: claude-opus-4-6
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
+    cached_input_per_mtok: "0.50"
+  - provider: anthropic
+    model: claude-opus-4-5
+    match: prefix
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
+    cached_input_per_mtok: "0.50"
+  - provider: anthropic
+    model: claude-opus-4-1
+    match: prefix
+    input_per_mtok: "15.00"
+    output_per_mtok: "75.00"
+    cached_input_per_mtok: "1.50"
+    notes: "Retired on the first-party API; still reachable on some cloud platforms."
+  - provider: anthropic
+    model: claude-sonnet-5
+    match: prefix
+    input_per_mtok: "2.00"
+    output_per_mtok: "10.00"
+    cached_input_per_mtok: "0.20"
+  - provider: anthropic
+    model: claude-sonnet-4-6
+    match: prefix
+    input_per_mtok: "3.00"
+    output_per_mtok: "15.00"
+    cached_input_per_mtok: "0.30"
+  - provider: anthropic
+    model: claude-sonnet-4-5
+    match: prefix
+    input_per_mtok: "3.00"
+    output_per_mtok: "15.00"
+    cached_input_per_mtok: "0.30"
+  - provider: anthropic
+    model: claude-haiku-4-5
+    match: prefix
+    input_per_mtok: "1.00"
+    output_per_mtok: "5.00"
+    cached_input_per_mtok: "0.10"
+  - provider: anthropic
+    model: claude-3-5-haiku
+    match: prefix
+    input_per_mtok: "0.80"
+    output_per_mtok: "4.00"
+    cached_input_per_mtok: "0.08"
+    notes: "Retired on the first-party API; still reachable on some cloud platforms."
+
+  # --- google -------------------------------------------------------------
+  - provider: google
+    model: gemini-3.8-flash
+    match: prefix
+    input_per_mtok: "0.75"
+    output_per_mtok: "3.75"
+    cached_input_per_mtok: "0.075"
+    notes: "Introductory rate published through 2026-12-31; rises to 1.50/7.50 on 2027-01-01."
+  - provider: google
+    model: gemini-3.7-flash
+    match: prefix
+    input_per_mtok: "0.75"
+    output_per_mtok: "3.75"
+    cached_input_per_mtok: "0.075"
+    notes: "Introductory rate published through 2026-12-31; rises to 1.50/7.50 on 2027-01-01."
+  - provider: google
+    model: gemini-3.6-flash
+    match: prefix
+    input_per_mtok: "0.75"
+    output_per_mtok: "3.75"
+    cached_input_per_mtok: "0.075"
+    notes: "Introductory rate published through 2026-12-31; rises to 1.50/7.50 on 2027-01-01."
+  - provider: google
+    model: gemini-3.5-flash-lite
+    match: prefix
+    input_per_mtok: "0.30"
+    output_per_mtok: "2.50"
+  - provider: google
+    model: gemini-3.5-flash
+    match: prefix
+    input_per_mtok: "1.50"
+    output_per_mtok: "9.00"
+  - provider: google
+    model: gemini-3.1-flash-lite
+    match: prefix
+    input_per_mtok: "0.25"
+    output_per_mtok: "1.50"
+    notes: "Text, image and video input. Audio input is priced higher at 0.50 and is not modelled."
+  - provider: google
+    model: gemini-3.1-pro
+    match: prefix
+    input_per_mtok: "2.00"
+    output_per_mtok: "12.00"
+    notes: "Prompts of 200K tokens or fewer. Above that the published rate is 4.00 / 18.00."
+  - provider: google
+    model: gemini-2.5-pro
+    match: prefix
+    input_per_mtok: "1.25"
+    output_per_mtok: "10.00"
+    cached_input_per_mtok: "0.125"
+    notes: "Prompts of 200K tokens or fewer. Above that the published rate is 2.50 / 15.00."
+  - provider: google
+    model: gemini-2.5-flash-lite
+    match: prefix
+    input_per_mtok: "0.10"
+    output_per_mtok: "0.40"
+    cached_input_per_mtok: "0.01"
+    notes: "Text, image and video input. Audio input is priced higher at 0.30 and is not modelled."
+  - provider: google
+    model: gemini-2.5-flash
+    match: prefix
+    input_per_mtok: "0.30"
+    output_per_mtok: "2.50"
+    cached_input_per_mtok: "0.03"
+    notes: "Text, image and video input. Audio input is priced higher at 1.00 and is not modelled."
