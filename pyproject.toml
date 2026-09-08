@@ -1,0 +1,427 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-eval-lab"
+description = "A local-first LLM evaluation platform: benchmarks, providers, statistics and a dashboard."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    "python-dotenv>=1,<2",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "aiosqlite>=0.20,<1",
+    "alembic>=1.13,<2",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "typer>=0.12,<1",
+    "httpx>=0.27,<1",
+    "pyyaml>=6.0,<7",
+    "jsonschema>=4.20,<5",
+    "structlog>=24.1",
+    "rich>=13.7",
+]
+
+[project.scripts]
+# Implemented in Slice 2; declared now because pyproject.toml is a frozen
+# contract file (constraints.md 3.3) and later phases must not edit it.
+llm-eval = "llm_eval_lab.cli.main:app"
+
+[project.optional-dependencies]
+# Floors confirmed against published PyPI releases on 2026-09-06 (phase 0).
+# Not revised by Lane A in phase 6; a genuinely required bump goes through
+# the stop-and-coordinate protocol (constraints.md 3.3).
+openai = ["openai>=2,<3"]
+anthropic = ["anthropic>=0.60,<1"]
+google = ["google-genai>=1,<2"]
+embeddings = ["numpy>=2"]
+all = ["llm-eval-lab[openai,anthropic,google,embeddings]"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "import-linter>=2.0",
+    "types-PyYAML>=6.0.12",
+]
+
+[tool.hatch.version]
+path = "src/llm_eval_lab/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_eval_lab"]
+# api/static/ is gitignored (populated by the frontend build hook below) so
+# it needs to be force-included; the two data yaml files are declared here
+# too so packaging never needs to change again in a later phase.
+artifacts = [
+    "src/llm_eval_lab/pricing/data/*.yaml",
+    "src/llm_eval_lab/reporting/data/*.yaml",
+    "src/llm_eval_lab/api/static/**/*",
+]
+
+# Alembic migration scripts are shipped INSIDE the package rather than left at
+# the repository root. `llm-eval db upgrade` has to work from an installed
+# wheel, and the alternative -- falling back to whatever `migrations/` happens
+# to sit in the user's working directory -- would have Alembic import and
+# execute Python from an untrusted directory. Authorised under the section 3.3
+# change protocol.
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "llm_eval_lab/migrations"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/migrations",
+    "/alembic.ini",
+]
+# The frontend's BUILT output only, never its source, and via `artifacts`
+# rather than `include`: `frontend/dist` is gitignored, and hatchling's sdist
+# target excludes VCS-ignored paths even when they match an `include` glob --
+# `artifacts` is the same escape hatch the wheel target above already uses for
+# its own gitignored `api/static/`. This exists because `uv build` (with no
+# `--wheel`) builds the wheel FROM the sdist rather than from the checkout
+# directly, so the sdist has to carry whatever the wheel-build hook
+# (`hatch_build.py`) needs to find at that second stage. That hook copies
+# `frontend/dist` verbatim and runs no build of its own -- it deliberately
+# does not shell out to npm, which would make a Python wheel build depend on
+# Node.js and network access being available wherever `pip install` happens
+# to trigger one. Present only when a developer ran `npm run build` before
+# packaging; absent, this matches nothing and `uv build` behaves exactly as
+# it did before this addition: a backend-only wheel with the placeholder page
+# at `/`. See docs/architecture.md for the two supported packaging paths.
+artifacts = [
+    "/frontend/dist/**/*",
+]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # Formatter-owned rules that conflict with `ruff format`.
+    "COM812", # missing-trailing-comma: formatter decides this
+    "ISC001", # single-line-implicit-string-concatenation: formatter decides this
+    # Docstring convention: pick one style, ignore the other's rules.
+    "D203", # one-blank-line-before-class (conflicts with D211)
+    "D213", # multi-line-summary-second-line (conflicts with D212)
+    # Project-level calls, not defects.
+    "D100", # undocumented-public-module: not every module needs a module docstring
+    "D104", # undocumented-public-package: `__init__.py` files are frequently empty by design
+    "ANN401", # any-type: `raw`/`metadata` fields are genuinely `JSONValue`, see mypy config below
+    "TD002", # missing-todo-author: single-maintainer project, no TODO author convention
+    "TD003", # missing-todo-link: no issue tracker link convention yet
+    "FIX002", # line-contains-todo: TODOs are allowed to persist across commits
+    "CPY001", # missing-copyright-notice: project has no per-file copyright header convention
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert: pytest's whole idiom is `assert`
+    "D",      # pydocstyle: test functions document themselves via their names
+    "PLR2004", # magic-value-comparison: literal expected values are the point of a test
+    "SLF001", # private-member-access: tests legitimately reach into internals
+]
+"src/llm_eval_lab/*/__init__.py" = [
+    "D104", # undocumented-public-package: covered globally above, listed for clarity
+]
+# TID251 is a single rule code covering every entry in the banned-api table
+# below, so a per-file ignore of TID251 unbans the *whole table* at that
+# path, not just the one entry that path is meant to be exempt from. That
+# table is therefore deliberately kept to only the storage-only imports
+# (sqlalchemy/sqlalchemy.orm/alembic/aiosqlite): unbanning TID251 here is
+# then exactly as broad as intended, with no collateral leak. The
+# api-only/cli-only restrictions (fastapi/uvicorn/starlette, typer) are
+# enforced precisely, module-by-module, by the import-linter `forbidden`
+# contracts below instead, since import-linter's per-module granularity
+# does not share this limitation.
+"src/llm_eval_lab/storage/**" = ["TID251"]
+"migrations/**" = ["TID251"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["llm_eval_lab"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Second enforcement net alongside the import-linter contract below
+# (constraints.md 3.2, decision D9), scoped to storage-only imports only.
+# Modules that are allowed to use these are un-banned in storage/ and
+# migrations/ via per-file-ignores (rule TID251) above. fastapi/uvicorn/
+# starlette (api-only) and typer (cli-only) are deliberately NOT listed
+# here: TID251 is one rule code covering this whole table, so unbanning it
+# for api/ or cli/ would also unban sqlalchemy/alembic/aiosqlite there,
+# which is exactly the leak import-linter's `forbidden` contracts below
+# exist to close precisely instead.
+"sqlalchemy".msg = "Only storage/ and migrations/ may import SQLAlchemy directly."
+"sqlalchemy.orm".msg = "Only storage/ and migrations/ may import SQLAlchemy directly."
+"alembic".msg = "Only storage/ and migrations/ may import Alembic directly."
+"aiosqlite".msg = "Only storage/ and migrations/ may import aiosqlite directly."
+
+[tool.ruff.format]
+# Defaults are intentionally left as-is.
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+# `raw` and `metadata` fields on the frozen contract models genuinely need to
+# carry a `JSONValue` shape (arbitrary JSON-compatible data); disallowing all
+# explicit `Any` would force a fake, unenforceable type there instead.
+disallow_any_explicit = false
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "--strict-markers -m 'not external'"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:llm_eval_lab"]
+markers = [
+    "external: requires real network access or vendor credentials; opt-in only",
+    "slow: slow-running test",
+    "integration: integration test crossing module boundaries",
+    "e2e: end-to-end test exercising the full stack",
+]
+
+# ---------------------------------------------------------------------------
+# import-linter
+#
+# Encodes the layered dependency-direction table in constraints.md section
+# 3.2. The `layers` contract enforces the primary bottom-to-top ordering
+# (a module may import only from strictly lower layers, sideways imports
+# within one layer are independent unless grouped as noted below). The
+# `forbidden` contracts add the specific narrower exceptions the table
+# calls out that are stricter than plain layering would give for free.
+#
+# One documented simplification: the table says `utils` and `observability`
+# "may import each other". A `layers` contract cannot express a literal
+# bidirectional allowance between two ranked layers (and a true bidirectional
+# circular import does not work in Python regardless). They are modelled as
+# independent same-rank siblings instead, which is safe and mechanical; any
+# lane needing the specific direction goes through the frozen-file protocol.
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_package = "llm_eval_lab"
+# Required so `forbidden` contracts can name third-party packages (sqlalchemy,
+# fastapi, typer, ...) directly, not just first-party llm_eval_lab modules.
+# This is the precise enforcement net for module-to-owner scoping: unlike
+# Ruff's `flake8-tidy-imports.banned-api` (one rule code per whole table, so
+# a per-file ignore unbans everything in the table at that path), a
+# `forbidden` contract here names exactly one external package per rule.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture (bottom to top)"
+type = "layers"
+layers = [
+    # `cli` sits ABOVE `api` rather than beside it. `llm-eval serve` (R-CLI-09)
+    # is the CLI starting the API, so the sibling form -- which import-linter
+    # reads as "neither may import the other" -- forbade the one edge the
+    # command needs while claiming to describe the architecture. Ranking them
+    # is strictly stronger than the sibling form was in practice: it permits
+    # `cli -> api` and still forbids `api -> cli`, which is the true rule, and
+    # the `typer is cli-only` contract below still stops the API importing
+    # Typer. Authorised under the constraints.md 3.3 change protocol.
+    "llm_eval_lab.cli",
+    "llm_eval_lab.api",
+    "llm_eval_lab.services",
+    "llm_eval_lab.runner | llm_eval_lab.storage",
+    "llm_eval_lab.evaluators | llm_eval_lab.reporting",
+    "llm_eval_lab.datasets | llm_eval_lab.pricing | llm_eval_lab.providers",
+    "llm_eval_lab.models",
+    "llm_eval_lab.observability | llm_eval_lab.utils",
+]
+
+[[tool.importlinter.contracts]]
+name = "models is pure domain: no observability"
+type = "forbidden"
+source_modules = ["llm_eval_lab.models"]
+forbidden_modules = ["llm_eval_lab.observability"]
+
+[[tool.importlinter.contracts]]
+name = "datasets and pricing do not touch observability directly"
+type = "forbidden"
+source_modules = ["llm_eval_lab.datasets", "llm_eval_lab.pricing"]
+forbidden_modules = ["llm_eval_lab.observability"]
+
+[[tool.importlinter.contracts]]
+name = "evaluators stay off concrete providers, pricing and observability"
+type = "forbidden"
+source_modules = ["llm_eval_lab.evaluators"]
+forbidden_modules = [
+    "llm_eval_lab.providers",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "reporting stays off providers, datasets and observability"
+type = "forbidden"
+source_modules = ["llm_eval_lab.reporting"]
+forbidden_modules = [
+    "llm_eval_lab.providers",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "runner does not touch observability directly"
+type = "forbidden"
+source_modules = ["llm_eval_lab.runner"]
+forbidden_modules = ["llm_eval_lab.observability"]
+
+[[tool.importlinter.contracts]]
+name = "storage is isolated to models, utils and its own vendor libraries"
+type = "forbidden"
+source_modules = ["llm_eval_lab.storage"]
+forbidden_modules = [
+    "llm_eval_lab.providers",
+    "llm_eval_lab.evaluators",
+    "llm_eval_lab.reporting",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.observability",
+]
+
+[[tool.importlinter.contracts]]
+name = "api and cli reach persistence and providers only through services"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["llm_eval_lab.api", "llm_eval_lab.cli"]
+forbidden_modules = [
+    "llm_eval_lab.storage",
+    "llm_eval_lab.providers",
+    "llm_eval_lab.runner",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.evaluators",
+]
+# One, narrow, named exception: `cli.main` alone loads opt-in evaluator
+# plugins at process start (decision D-CUSTOM), and that loader lives in
+# `evaluators.plugins`. It cannot be reached through `services` -
+# `tests/unit/test_plugins.py` asserts by AST scan that neither `services`
+# nor `api` mentions plugin loading at all, which is what keeps a plugin -
+# arbitrary third-party code - unreachable from any HTTP request path. This
+# is the one legitimate `cli -> evaluators` edge in the project; nothing
+# wider is exempted, not the rest of `cli`, not the rest of `evaluators`.
+# `tests/unit/test_cli_import_boundary.py` proves the exemption is exactly
+# this narrow by temporarily planting the same import in `api/` and
+# confirming `lint-imports` still catches it there. Authorised under the
+# constraints.md 3.3 change protocol.
+ignore_imports = ["llm_eval_lab.cli.main -> llm_eval_lab.evaluators.plugins"]
+
+# ---------------------------------------------------------------------------
+# Third-party module-to-owner scoping (decision D9's "second net", made
+# precise here rather than via Ruff's banned-api, which cannot scope a
+# per-file ignore to a single banned name — see the comment on
+# `[tool.ruff.lint.flake8-tidy-imports.banned-api]` above). `migrations/`
+# is not yet a package (created by Lane C in a later phase) so it cannot be
+# added as a source module until then; this list will need extending at
+# that point via the frozen-file protocol.
+# ---------------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "sqlalchemy, alembic and aiosqlite are storage-only"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = [
+    "llm_eval_lab.models",
+    "llm_eval_lab.providers",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.evaluators",
+    "llm_eval_lab.reporting",
+    "llm_eval_lab.runner",
+    "llm_eval_lab.services",
+    "llm_eval_lab.api",
+    "llm_eval_lab.cli",
+    "llm_eval_lab.observability",
+    "llm_eval_lab.utils",
+]
+forbidden_modules = ["sqlalchemy", "alembic", "aiosqlite"]
+
+[[tool.importlinter.contracts]]
+name = "fastapi, uvicorn and starlette are api-only"
+type = "forbidden"
+# Direct imports stay banned in every source module below, `cli` included. The
+# only indirect path this opens is `cli -> api -> fastapi/uvicorn/starlette`,
+# which `llm-eval serve` requires: the layers contract above prevents every
+# other listed module from reaching `llm_eval_lab.api` at all. The neighbouring
+# "api and cli reach persistence and providers only through services" contract
+# carries the same key for the same reason. Authorised under constraints.md 3.3.
+allow_indirect_imports = true
+source_modules = [
+    "llm_eval_lab.models",
+    "llm_eval_lab.providers",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.evaluators",
+    "llm_eval_lab.reporting",
+    "llm_eval_lab.runner",
+    "llm_eval_lab.storage",
+    "llm_eval_lab.services",
+    "llm_eval_lab.cli",
+    "llm_eval_lab.observability",
+    "llm_eval_lab.utils",
+]
+forbidden_modules = ["fastapi", "uvicorn", "starlette"]
+
+[[tool.importlinter.contracts]]
+name = "typer is cli-only"
+type = "forbidden"
+source_modules = [
+    "llm_eval_lab.models",
+    "llm_eval_lab.providers",
+    "llm_eval_lab.datasets",
+    "llm_eval_lab.pricing",
+    "llm_eval_lab.evaluators",
+    "llm_eval_lab.reporting",
+    "llm_eval_lab.runner",
+    "llm_eval_lab.storage",
+    "llm_eval_lab.services",
+    "llm_eval_lab.api",
+    "llm_eval_lab.observability",
+    "llm_eval_lab.utils",
+]
+forbidden_modules = ["typer"]
+# `rich` is deliberately not scoped to cli-only, unlike the reviewer's initial
+# suggestion: section 3.1 of constraints.md documents both
+# `cli/output.py` and `reporting/formatters/tables.py` as using Rich
+# renderers, so a cli-only restriction on rich would conflict with the
+# already-decided architecture. Flagged to the reviewer rather than applied
+# silently.

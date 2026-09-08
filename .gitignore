@@ -1,0 +1,44 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Backend-bundled frontend output (populated by the hatch build hook)
+src/llm_eval_lab/api/static/
+
+# Environment and secrets
+.env
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Generated-types staleness check writes this and its own trap removes it;
+# a killed shell could leave it behind.
+*.bak
+
+# Local development artifacts forbidden from the repository
+.claude/
+.omc/
+
+# Local planning and policy documents; never part of the shipped repository
+*.local.md

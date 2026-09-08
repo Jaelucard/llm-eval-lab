@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No secrets are referenced anywhere in this workflow. An accidental
+# network dependency in a test or a build step fails outright instead of
+# silently succeeding against a real vendor API.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev --python ${{ matrix.python-version }}
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: mypy
+        run: uv run mypy src tests
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: pytest
+        run: uv run pytest -q
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # frontend/ does not exist until a later phase. Every step below is
+      # guarded so this job stays green from phase 0 through phase 7 and
+      # activates by itself the moment frontend/package.json lands; no lane
+      # has to edit this workflow later.
+      - name: Set up Node
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Type check
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Test
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm test -- --run
+
+      - name: Build
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: npm run build
+
+      - name: Generated-types staleness check
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
+        run: |
+          trap 'rm -f src/api/generated-types.ts.bak' EXIT
+          cp src/api/generated-types.ts src/api/generated-types.ts.bak
+          npm run generate-types
+          diff -q src/api/generated-types.ts src/api/generated-types.ts.bak
